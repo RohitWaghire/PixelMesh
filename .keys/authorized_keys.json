@@ -1,0 +1,176 @@
+{
+  "keys": [
+    {
+      "fingerprint": "SHA256:NrssimIKwSgYdfaKyjpWf2yF7Sw0XtgQnnxFQhNJkcw",
+      "agentName": "Dev Admin Agent (Auto-Provisioned)",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAubVUlv1tSpSJNtSQxq8dE66LhXz4OU8ppPWaha5GYP8=\n-----END PUBLIC KEY-----\n",
+      "algorithm": "ed25519",
+      "creditsBalance": 500,
+      "scopes": [
+        "all-tools"
+      ],
+      "createdAt": "2026-08-20T13:29:34.145Z",
+      "totalInvocations": 0,
+      "status": "active"
+    },
+    {
+      "fingerprint": "SHA256:KEUkaDb1i3fXdEbJcV6aYqcXGUEfjaYQBuYFf7elSQQ",
+      "agentName": "MCP Test Worker",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAPM+Jp0Zfgg59wBY5vOPlGsDwklLl7ns9xaWMSkKikBE=\n-----END PUBLIC KEY-----\n",
+      "algorithm": "ed25519",
+      "creditsBalance": 49,
+      "scopes": [
+        "all-tools"
+      ],
+      "createdAt": "2026-08-20T13:29:34.170Z",
+      "totalInvocations": 1,
+      "status": "active",
+      "lastUsedAt": "2026-08-20T13:29:34.189Z"
+    },
+    {
+      "fingerprint": "SHA256:5tpLWjG8WhiLpz_gx-44C4Ik8XNF0nCVKY_3gdvOubQ",
+      "agentName": "E2E-Worker-Agent",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAzZoBEPDRxkFP014txLOasDbnvOWDYhytRoYhaSe1JDc=\n-----END PUBLIC KEY-----\n",
+      "algorithm": "ed25519",
+      "creditsBalance": 99,
+      "scopes": [
+        "all-tools"
+      ],
+      "createdAt": "2026-08-20T13:31:53.801Z",
+      "totalInvocations": 1,
+      "status": "active",
+      "lastUsedAt": "2026-08-20T13:31:53.816Z"
+    },
+    {
+      "fingerprint": "SHA256:ZL2gQqWcYnr0OHlCuw8ehfNQUly6LO7nHtsrtNmiC8Y",
+      "agentName": "E2E-Security-Agent",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA8/Y/QWVmVH9EcmYFadz9KRSnx5oFjYBEyh2ldGawt1M=\n-----END PUBLIC KEY-----\n",
+      "algorithm": "ed25519",
+      "creditsBalance": 0,
+      "scopes": [
+        "all-tools"
+      ],
+      "createdAt": "2026-08-20T13:31:53.818Z",
+      "totalInvocations": 2,
+      "status": "active",
+      "lastUsedAt": "2026-08-20T13:31:53.819Z"
+    },
+    {
+      "fingerprint": "SHA256:y7D6Ky-qV3KKs3uwJG5-3X7AEOPSqrd0YfTej56rohY",
+      "agentName": "E2E-Worker-Agent",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAOVAAL66JoEXBO1DZA6TMhltEdMfatscdovTgZ0j8p18=\n-----END PUBLIC KEY-----\n",
+      "algorithm": "ed25519",
+      "creditsBalance": 99,
+      "scopes": [
+        "all-tools"
+      ],
+      "createdAt": "2026-08-20T13:33:31.825Z",
+      "totalInvocations": 1,
+      "status": "active",
+      "lastUsedAt": "2026-08-20T13:33:31.840Z"
+    },
+    {
+      "fingerprint": "SHA256:HEV8-QSM1aW_Zst3GU0R3JzMJeDpMVAs_9aEn1H_Cos",
+      "agentName": "E2E-Security-Agent",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAWQrhwy6P9wqw1jR0fJRbNSuM601Q4FVIF8yQINpPIzE=\n-----END PUBLIC KEY-----\n",
+      "algorithm": "ed25519",
+      "creditsBalance": 0,
+      "scopes": [
+        "all-tools"
+      ],
+      "createdAt": "2026-08-20T13:33:31.842Z",
+      "totalInvocations": 2,
+      "status": "active",
+      "lastUsedAt": "2026-08-20T13:33:31.843Z"
+    },
+    {
+      "fingerprint": "SHA256:2-rMxn6-yP4Ollp8Zd15u4BvM6ORE864LJIsVLG6prk",
+      "agentName": "MCP Test Worker",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEATGbx9XBTMLm4EzLL/D3CIPayVZCDV/VzFg8qqF3YDnY=\n-----END PUBLIC KEY-----\n",
+      "algorithm": "ed25519",
+      "creditsBalance": 49,
+      "scopes": [
+        "all-tools"
+      ],
+      "createdAt": "2026-08-20T13:33:32.079Z",
+      "totalInvocations": 1,
+      "status": "active",
+      "lastUsedAt": "2026-08-20T13:33:32.096Z"
+    },
+    {
+      "fingerprint": "SHA256:muJGdibgkz0f1PghYXHoSCGnkbUvNJv6j54tGC3wIuM",
+      "agentName": "MCP Test Worker",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAGZK+H4TXHQwIfY1St7QFtaxqm9IxofkKprLUrGwvrc0=\n-----END PUBLIC KEY-----\n",
+      "algorithm": "ed25519",
+      "creditsBalance": 49,
+      "scopes": [
+        "all-tools"
+      ],
+      "createdAt": "2026-08-20T13:35:24.056Z",
+      "totalInvocations": 1,
+      "status": "active",
+      "lastUsedAt": "2026-08-20T13:35:24.074Z"
+    },
+    {
+      "fingerprint": "SHA256:rOj-gEiia01yQXiJs18vftTEmZ2zvFZgzJMYFOUfowE",
+      "agentName": "E2E-Security-Agent",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA4WQ6T4GUHG+D+1zjyNL+8//yPt3gKS2kI5RqRiiIGBA=\n-----END PUBLIC KEY-----\n",
+      "algorithm": "ed25519",
+      "creditsBalance": 0,
+      "scopes": [
+        "all-tools"
+      ],
+      "createdAt": "2026-08-20T13:35:24.078Z",
+      "totalInvocations": 2,
+      "status": "active",
+      "lastUsedAt": "2026-08-20T13:35:24.080Z"
+    },
+    {
+      "fingerprint": "SHA256:srVzeTPU7ud3YihiiwGUNkxCl1WXylAELESuw_oFkAs",
+      "agentName": "E2E-Worker-Agent",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAJdsB/4siqaZFRr8qK0k3TXMTBTQSMMnqdWQAFfaEe68=\n-----END PUBLIC KEY-----\n",
+      "algorithm": "ed25519",
+      "creditsBalance": 99,
+      "scopes": [
+        "all-tools"
+      ],
+      "createdAt": "2026-08-20T13:36:09.876Z",
+      "totalInvocations": 1,
+      "status": "active",
+      "lastUsedAt": "2026-08-20T13:36:09.892Z"
+    },
+    {
+      "fingerprint": "SHA256:Bl1DItMxzGU-qdCruhcykh3txZSs2pKVJDxF3cPcXvM",
+      "agentName": "MCP Test Worker",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA3YjAEG0kwDE0/opy+ks8RSDKdU0e41f2G4cRwIP+KFQ=\n-----END PUBLIC KEY-----\n",
+      "algorithm": "ed25519",
+      "creditsBalance": 49,
+      "scopes": [
+        "all-tools"
+      ],
+      "createdAt": "2026-08-20T13:36:09.881Z",
+      "totalInvocations": 1,
+      "status": "active",
+      "lastUsedAt": "2026-08-20T13:36:09.898Z"
+    },
+    {
+      "fingerprint": "SHA256:kaAZCeu7-W2XhBZZSWPKQlkYavib3MYPqglMNV9cnFg",
+      "agentName": "E2E-Security-Agent",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA7J5oQ01QeyWbonLyhs2lsS9FXqYn6uRYKdcht3sSrRM=\n-----END PUBLIC KEY-----\n",
+      "algorithm": "ed25519",
+      "creditsBalance": 0,
+      "scopes": [
+        "all-tools"
+      ],
+      "createdAt": "2026-08-20T13:36:09.894Z",
+      "totalInvocations": 2,
+      "status": "active",
+      "lastUsedAt": "2026-08-20T13:36:09.895Z"
+    }
+  ],
+  "initialDevKeypair": {
+    "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAubVUlv1tSpSJNtSQxq8dE66LhXz4OU8ppPWaha5GYP8=\n-----END PUBLIC KEY-----\n",
+    "privateKeyPem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIHKCvAIAyP2RXMGMNIMeIUC/+6bJwhf8t+EqXF3u1uX0\n-----END PRIVATE KEY-----\n",
+    "algorithm": "ed25519"
+  }
+}

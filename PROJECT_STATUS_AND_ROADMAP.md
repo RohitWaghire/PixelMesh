@@ -64,6 +64,7 @@
 +----------------------------------------------------------------------------------------------------------------+
 |                                     PIXELMESH PRODUCTION ROADMAP OVERVIEW                                      |
 +----------------------------------------------------------------------------------------------------------------+
+|  Phase 0: Repository Hygiene & Production Packaging (Strip Scratch Files, Professional README.md, .gitignore)  |
 |  Phase 1: Persistence & Distributed State (PostgreSQL + Prisma, Redis Nonce/Rate-Limiter, Distributed Keyring) |
 |  Phase 2: Dual-Audience Routing & High-Converting Landing Experience (Public Hero, Sandbox Demo, Auth Console)  |
 |  Phase 3: Compute Offloading & Resilient Image Pipeline (BullMQ Queue, Ephemeral Workers, S3/R2 Pre-signed URLs)|
@@ -72,6 +73,27 @@
 |  Phase 6: Ecosystem Distribution & Agent Starter Kits (MCP Registry, npx pixelmesh-agent, SDKs & Agent Rules) |
 +----------------------------------------------------------------------------------------------------------------+
 ```
+
+---
+
+## Phase 0: Repository Hygiene, Documentation Sanitization & Clean Packaging
+
+### Goal
+Sanitize the repository for public/production release by removing internal AI scratch planning files, configuring strict `.gitignore` rules, and authoring a world-class, professional `README.md` for developers and AI agents discovering the project on GitHub.
+
+### 0.1 Repository Sanitization & Git Hygiene
+- Add all scratch/planning artifacts to `.gitignore` so internal brainstorming files do not pollute the public `main` branch:
+  - `.scratch/`
+  - `BRAINSTORM_IDEAS.md`
+  - `PROJECT_STATUS_AND_ROADMAP.md`
+- Remove existing untracked scratch artifacts from Git cache.
+
+### 0.2 Author Production-Grade `README.md`
+- Visual Architecture & Protocol diagrams (ASCII/Mermaid).
+- Quickstart guide for developers connecting Claude Desktop, Cursor IDE, or Python/TypeScript agents.
+- Complete 22+ MCP Image Filter tool reference table with parameters and cost tiers.
+- Cryptographic authentication specification (`X-Agent-*` headers and canonical payload signing).
+- Live local development and Docker deployment instructions.
 
 ---
 

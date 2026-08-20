@@ -299,20 +299,21 @@ Harden authentication against automated credit-farming bots, introduce enterpris
 - **Structured Logging (Pino)**:
   - JSON logging with correlation IDs, fingerprint masks, and execution times.
 
-### 4.3 Containerization & CI/CD Pipeline
-- **Multi-Stage Production Dockerfile**:
-  - Stage 1: Dependency resolution (`node:22-alpine` with `sharp` native glibc/musl prebuilds).
-  - Stage 2: Next.js standalone build (`output: "standalone"`).
-  - Stage 3: Minimal runtime container (< 180MB) running as non-root `nextjs` user.
-- **GitHub Actions CI/CD**:
-  - Linting (`eslint`), TypeScript typechecking (`tsc --noEmit`).
-  - Unit and integration testing (`node --test`).
-  - Container vulnerability scan (Trivy).
-  - Automated deployment to staging/production clusters.
+### 5.3 Containerization & GitHub Auto-Deployment Architecture
+- **Multi-Stage Production Dockerfile (`Dockerfile` + `.dockerignore`)**:
+  - Stage 1 (`deps`): Dependency resolution (`node:22-alpine` with `sharp` native glibc/musl prebuilds).
+  - Stage 2 (`builder`): Next.js standalone compilation (`output: "standalone"`).
+  - Stage 3 (`runner`): Minimal runtime container (< 150MB) running as non-root `nextjs` user with port 3000 exposed.
+- **Git Push-to-Deploy Compatibility (Railway, Render, Fly.io, Cloud Run)**:
+  - Repository connects directly to cloud provider via GitHub webhook.
+  - Pushing to `main` (or `dev`) automatically triggers cloud provider to detect `Dockerfile`, build the optimized Linux container, and roll out zero-downtime updates with automated health checks.
+- **GitHub Actions CI/CD Pipeline**:
+  - Automated pull request verification: linting (`eslint`), typecheck (`tsc --noEmit`), and 100% test suite execution (`npm test`) before merge.
+  - Automated Docker container vulnerability scanning (Trivy).
 
 ---
 
-## Phase 5: Ecosystem Distribution & Agent Starter Kits
+## Phase 6: Ecosystem Distribution & Agent Starter Kits
 
 ### Goal
 Drive ecosystem adoption by publishing PixelMesh to official MCP registries, releasing an npm CLI and client SDKs, and providing drop-in rules for major agent platforms.

@@ -65,10 +65,11 @@
 |                                     PIXELMESH PRODUCTION ROADMAP OVERVIEW                                      |
 +----------------------------------------------------------------------------------------------------------------+
 |  Phase 1: Persistence & Distributed State (PostgreSQL + Prisma, Redis Nonce/Rate-Limiter, Distributed Keyring) |
-|  Phase 2: Compute Offloading & Resilient Image Pipeline (BullMQ Queue, Ephemeral Workers, S3/R2 Pre-signed URLs)|
-|  Phase 3: Monetization & Automated Billing (Stripe Webhooks, x402 / Web3 Micropayments, Usage Analytics)       |
-|  Phase 4: Production Hardening, Sybil Defense & Observability (Turnstile, PoW Challenge, OTel/Sentry, Docker)  |
-|  Phase 5: Ecosystem Distribution & Agent Starter Kits (MCP Registry, npx pixelmesh-agent, SDKs & Agent Rules) |
+|  Phase 2: Dual-Audience Routing & High-Converting Landing Experience (Public Hero, Sandbox Demo, Auth Console)  |
+|  Phase 3: Compute Offloading & Resilient Image Pipeline (BullMQ Queue, Ephemeral Workers, S3/R2 Pre-signed URLs)|
+|  Phase 4: Monetization & Automated Billing (Stripe Webhooks, x402 / Web3 Micropayments, Usage Analytics)       |
+|  Phase 5: Production Hardening, Sybil Defense & Observability (Turnstile, PoW Challenge, OTel/Sentry, Docker)  |
+|  Phase 6: Ecosystem Distribution & Agent Starter Kits (MCP Registry, npx pixelmesh-agent, SDKs & Agent Rules) |
 +----------------------------------------------------------------------------------------------------------------+
 ```
 
@@ -107,7 +108,61 @@ Replace local flat-file storage and in-memory caches with a production-grade rel
 
 ---
 
-## Phase 2: Compute Offloading & Resilient Image Pipeline
+## Phase 2: Dual-Audience Architecture & High-Converting Landing Experience
+
+### Goal
+Provide a distinct, optimized interface for human visitors (landing page, interactive sandbox demo, and authenticated developer console) while preserving the zero-human, zero-cookie headless cryptographic gateway for autonomous AI agents at `/api/mcp`.
+
+```
+                        🌐 Visitor arrives at pixelmesh.io
+                                        |
+                   +--------------------+--------------------+
+                   |                                         |
+            🤖 Headless Agent                        👤 Human Visitor
+                   |                                         |
+     (Sends HTTP to /api/mcp)                                v
+                   |                               +-------------------+
+                   |                               | High-Converting   |
+                   |                               | Landing Page      |
+                   v                               +---------+---------+
+        [Zero-Human Crypto Gateway]                          |
+                                                 +-----------+-----------+
+                                                 |                       |
+                                                 v                       v
+                                        [Try Studio Sandbox]   [Login / Connect Agent]
+                                        (Interactive Demo)     (Developer Dashboard)
+```
+
+### 2.1 Public High-Converting Landing Page (`/`)
+- **Hero Section**: Distinct value proposition: *"The AI Agent-First Image Tool Mesh & Cryptographic WebMCP Gateway"*.
+- **Interactive Live Preview Widget**: Embedded draggable Before/After slider demonstrating real-time Sharp filter compositing without requiring user login.
+- **Agent Protocol Feature Breakdown**:
+  - Visual graphic explaining SSH-style asymmetric authentication vs. leaky API keys.
+  - Sub-50ms deterministic C++ libvips performance benchmarks.
+  - 22+ Native Filter catalog showcase with categorized interactive cards.
+- **Pricing & Credit Tier Grid**:
+  - Free Starter (100 credits on key generation).
+  - Dev Pack ($10 for 5,000 credits).
+  - Production Pool ($49 for 30,000 credits).
+  - Enterprise Cluster ($199 for 150,000 credits + dedicated queue).
+- **Global Navigation & CTAs**:
+  - `Connect Your Agent` (opens MCP Quickstart & Config Hub).
+  - `Launch Studio Sandbox` (`/studio`).
+  - `Developer Console` (`/dashboard`).
+
+### 2.2 Unauthenticated Studio Sandbox (`/studio`)
+- **Instant Human Playground**: Visitors can upload photos, test all 22+ filter tools, drag Before/After comparison sliders, and export high-res renders directly from the browser **without generating private keys or signing headers**.
+- **Interactive Code Generator**: Real-time cURL, Python (`requests`), Node.js (`fetch`), and MCP JSON-RPC payload generator reflecting whatever tool/slider parameters the human adjusts in the UI.
+
+### 2.3 Authenticated Developer Console (`/dashboard`)
+- **Protected Multi-Tenant Workspace**: Authenticated via NextAuth / Clerk (GitHub, Google, or Magic Link).
+- **Keyring & Agent Fleet Manager**: Manage multiple registered Agent Public Keys, generate local Ed25519 pairs, download `.pem` files, and set per-agent spending limits.
+- **Billing & Stripe Top-up**: Real-time credit balance tracker, automated auto-refill rules, Stripe invoices.
+- **Live Stream Inspector & APM**: Real-time WebSocket/SSE telemetry feed of incoming signed requests, latency graphs, and cryptographic verification audits.
+
+---
+
+## Phase 3: Compute Offloading & Resilient Image Pipeline
 
 ### Goal
 Decouple compute-heavy image transformations from Next.js HTTP server threads to prevent memory exhaustion (OOM), optimize TTFB (Time-to-First-Byte), and scale worker nodes independently.
@@ -244,7 +299,7 @@ Drive ecosystem adoption by publishing PixelMesh to official MCP registries, rel
   result = client.crop_image(image_bytes, width=400, height=400)
   ```
 
-### 5.3 Agent Starter Kits & One-Click Rules
+### 6.3 Agent Starter Kits & One-Click Rules
 - **Cursor IDE (`.cursorrules` & `.cursor/mcp.json`)**: Pre-configured prompt rules instructing Cursor Agent on when to invoke PixelMesh for UI asset generation and image processing.
 - **Claude Desktop & Anthropic Tool Use**: Ready-to-paste tool definitions and instructions.
 - **LangChain / CrewAI / AutoGen Toolkits**: Official tool wrappers (`PixelMeshTool` for LangChain Python/JS).
@@ -253,10 +308,11 @@ Drive ecosystem adoption by publishing PixelMesh to official MCP registries, rel
 
 # Summary Comparison: MVP vs. Production Roadmap
 
-| Capability | Current MVP State | Production Target (Phases 1-5) |
+| Capability | Current MVP State | Production Target (Phases 1-6) |
 | :--- | :--- | :--- |
 | **Data Persistence** | Flat JSON file (`.keys/authorized_keys.json`) | PostgreSQL with Prisma / Drizzle + ACID transactions |
 | **Anti-Replay Cache** | In-memory single-process `Map` | Distributed Redis Cluster with 60s auto-expiry |
+| **Human vs. Agent UX**| Shared raw dashboard on root (`/`) | High-converting Landing Page (`/`) + Public Studio Sandbox (`/studio`) + Auth Console (`/dashboard`) |
 | **Image Compute** | Synchronous inside Next.js API thread | Ephemeral worker pool powered by BullMQ & Redis queues |
 | **Payload Transport** | In-line Base64 strings in JSON-RPC | Direct Cloudflare R2 / S3 pre-signed URL binary streaming |
 | **Monetization** | Simulated dashboard top-up buttons | Stripe Checkout / Webhooks + x402 / Web3 micropayments |

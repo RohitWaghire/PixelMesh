@@ -182,6 +182,25 @@ Provide a distinct, optimized interface for human visitors (landing page, intera
 - **Billing & Stripe Top-up**: Real-time credit balance tracker, automated auto-refill rules, Stripe invoices.
 - **Live Stream Inspector & APM**: Real-time WebSocket/SSE telemetry feed of incoming signed requests, latency graphs, and cryptographic verification audits.
 
+### 2.4 Interactive Documentation Portal (`/docs`)
+- **Quickstart & Integration Guides**: Step-by-step setup walkthroughs for Claude Desktop, Cursor IDE, LangChain, and AutoGen.
+- **Interactive Code Tabs**: Per-tool examples in cURL, Python (`cryptography` + `requests`), TypeScript, Go, and Rust.
+- **Cryptographic Auth Specification**: Detailed breakdown of canonical signing strings, clock skew tolerance, and anti-replay nonces.
+- **Filter Reference Guide**: Exhaustive parameters, ranges, defaults, and visual examples for all 22+ tools.
+
+### 2.5 Agent-Native Markdown Mirroring & Agent Sitemap (`/llms.txt` & `sitemap.xml`)
+- **Token-Efficient Markdown Endpoints (`.md`)**:
+  - Mirror every major page with clean, semantic Markdown stripped of HTML/CSS noise:
+    - `/` $\rightarrow$ `/index.md` (Product summary & agent quickstart)
+    - `/docs` $\rightarrow$ `/docs.md` (Full API reference & tool schemas)
+    - `/studio` $\rightarrow$ `/studio.md` (Sandbox capabilities & limits)
+    - `/pricing` $\rightarrow$ `/pricing.md` (Cost tiers & micropayment spec)
+  - HTTP Content-Negotiation (`Accept: text/markdown`) support across all routes.
+- **Agent Manifest & Discovery Index**:
+  - `/llms.txt`: Structured manifest of all documentation endpoints following the Anthropic / FastHTML agent standard.
+  - `/llms-full.txt`: Consolidated single-file API and tool catalog for high-context LLMs.
+  - `sitemap.xml`: Auto-generated XML sitemap indexing both HTML pages and Markdown equivalents.
+
 ---
 
 ## Phase 3: Compute Offloading & Resilient Image Pipeline

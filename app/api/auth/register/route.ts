@@ -15,9 +15,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required proof-of-ownership signature and timestamp headers." }, { status: 400 });
     }
 
-    // Proof-of-ownership signature check
+    // Proof-of-ownership signature check (300s window)
     const now = Math.floor(Date.now() / 1000);
-    if (Math.abs(now - parseInt(timestamp, 10)) > 300) {
+    const parsedTs = parseInt(String(timestamp), 10);
+    if (isNaN(parsedTs) || Math.abs(now - parsedTs) > 300) {
       return NextResponse.json({ error: "Proof of ownership timestamp expired" }, { status: 400 });
     }
 
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
       signature,
       method: "POST",
       path: "/api/auth/register",
-      timestamp: timestamp.toString(),
+      timestamp: String(timestamp),
       nonce: "register-proof",
       body: JSON.stringify({ agent_name, public_key })
     });
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid proof-of-ownership signature" }, { status: 401 });
     }
 
-    const registered = keyStore.registerKey({
+    const registered = await keyStore.registerKey({
       agentName: agent_name || "Autonomous AI Agent",
       publicKeyPem: public_key,
       algorithm,

@@ -3,15 +3,15 @@ import { keyStore } from "@/lib/auth/key-store";
 import { generateAgentKeypair } from "@/lib/auth/agent-crypto";
 
 export async function GET() {
-  const keys = keyStore.getAllKeys();
+  const keys = await keyStore.listKeys();
   const devKeypair = keyStore.getDevKeypair();
 
   return NextResponse.json({
     keys,
     devKeypair: devKeypair ? {
-      fingerprint: keys[0]?.fingerprint,
-      publicKeyPem: devKeypair.publicKeyPem,
-      privateKeyPem: devKeypair.privateKeyPem
+      fingerprint: devKeypair.fingerprint || keys[0]?.fingerprint,
+      publicKeyPem: devKeypair.publicKeyPem || devKeypair.keypair?.publicKeyPem,
+      privateKeyPem: devKeypair.privateKeyPem || devKeypair.keypair?.privateKeyPem
     } : null
   });
 }
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
 
     if (action === "generate") {
       const keypair = generateAgentKeypair(algorithm);
-      const registered = keyStore.registerKey({
+      const registered = await keyStore.registerKey({
         agentName: agent_name || `Generated Agent (${algorithm})`,
         publicKeyPem: keypair.publicKeyPem,
         algorithm,
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
       if (!fingerprint || !amount) {
         return NextResponse.json({ error: "Missing fingerprint or amount" }, { status: 400 });
       }
-      const updated = keyStore.topUpCredits(fingerprint, Number(amount));
+      const updated = await keyStore.topUpCredits(fingerprint, Number(amount));
       return NextResponse.json({ success: true, agent: updated });
     }
 
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
       if (!fingerprint) {
         return NextResponse.json({ error: "Missing fingerprint" }, { status: 400 });
       }
-      const updated = keyStore.revokeKey(fingerprint);
+      const updated = await keyStore.revokeKey(fingerprint);
       return NextResponse.json({ success: true, agent: updated });
     }
 
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
       if (!public_key) {
         return NextResponse.json({ error: "Missing public_key" }, { status: 400 });
       }
-      const registered = keyStore.registerKey({
+      const registered = await keyStore.registerKey({
         agentName: agent_name || "Custom Agent",
         publicKeyPem: public_key,
         algorithm,

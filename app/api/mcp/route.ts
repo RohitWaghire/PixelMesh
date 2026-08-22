@@ -29,13 +29,12 @@ export async function POST(req: NextRequest) {
   const nonce = req.headers.get("x-agent-nonce");
   const signature = req.headers.get("x-agent-signature");
 
-  // 1. Authenticate Request
+  // 1. Authenticate Request Headers
   if (!fingerprint || !timestampStr || !nonce || !signature) {
-    const errorEntry = {
-      id: "req_" + Math.random().toString(36).substring(2, 9),
+    await telemetryStore.addLog({
       timestamp: new Date().toISOString(),
       method: method || "unknown",
-      tool: params?.name,
+      toolName: params?.name,
       fingerprint: fingerprint || "anonymous",
       agentName: "Unknown Agent",
       signatureValid: false,
@@ -44,10 +43,9 @@ export async function POST(req: NextRequest) {
       costCredits: 0,
       creditsRemaining: 0,
       latencyMs: Math.round(performance.now() - startTime),
-      status: "auth_error" as const,
+      status: "auth_error",
       errorMessage: "Missing required SSH cryptographic headers (x-agent-key-fingerprint, x-agent-timestamp, x-agent-nonce, x-agent-signature)"
-    };
-    telemetryStore.addLog(errorEntry);
+    });
 
     return NextResponse.json({
       jsonrpc,
@@ -63,14 +61,13 @@ export async function POST(req: NextRequest) {
   const nowSec = Math.floor(Date.now() / 1000);
   const driftMs = (nowSec - timestampNum) * 1000;
 
-  // 2. Anti-Replay Check
-  const nonceCheck = nonceCache.checkAndRecord(nonce, timestampNum);
+  // 2. Anti-Replay and Clock Skew Check via Distributed Nonce Cache
+  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum);
   if (!nonceCheck.valid) {
-    telemetryStore.addLog({
-      id: "req_" + Math.random().toString(36).substring(2, 9),
+    await telemetryStore.addLog({
       timestamp: new Date().toISOString(),
       method: method || "unknown",
-      tool: params?.name,
+      toolName: params?.name,
       fingerprint,
       agentName: "Unknown",
       signatureValid: false,
@@ -87,17 +84,16 @@ export async function POST(req: NextRequest) {
       jsonrpc,
       id,
       error: { code: -32001, message: `Unauthorized: ${nonceCheck.reason}` }
-    }, { status: 401 });
+    }, { status: nonceCheck.statusCode || 401 });
   }
 
-  // 3. Find Key in Keyring
-  const agentKey = keyStore.findKeyByFingerprint(fingerprint);
+  // 3. Find Key in Asynchronous Prisma KeyStore
+  const agentKey = await keyStore.findKeyByFingerprint(fingerprint);
   if (!agentKey || agentKey.status === "revoked") {
-    telemetryStore.addLog({
-      id: "req_" + Math.random().toString(36).substring(2, 9),
+    await telemetryStore.addLog({
       timestamp: new Date().toISOString(),
       method: method || "unknown",
-      tool: params?.name,
+      toolName: params?.name,
       fingerprint,
       agentName: "Unknown",
       signatureValid: false,
@@ -129,11 +125,11 @@ export async function POST(req: NextRequest) {
   });
 
   if (!isValidSig) {
-    telemetryStore.addLog({
-      id: "req_" + Math.random().toString(36).substring(2, 9),
+    await telemetryStore.addLog({
+      agentKeyId: agentKey.id,
       timestamp: new Date().toISOString(),
       method: method || "unknown",
-      tool: params?.name,
+      toolName: params?.name,
       fingerprint,
       agentName: agentKey.agentName,
       signatureValid: false,
@@ -156,8 +152,8 @@ export async function POST(req: NextRequest) {
   // 5. Handle MCP Protocol Methods
   if (method === "tools/list") {
     const latency = Math.round(performance.now() - startTime);
-    telemetryStore.addLog({
-      id: "req_" + Math.random().toString(36).substring(2, 9),
+    await telemetryStore.addLog({
+      agentKeyId: agentKey.id,
       timestamp: new Date().toISOString(),
       method: "tools/list",
       fingerprint,
@@ -184,19 +180,19 @@ export async function POST(req: NextRequest) {
     const toolName = params?.name;
     const toolArgs = params?.arguments || {};
 
-    // Validate Key Scopes (CONTEXT.md Scope Permission Boundary)
+    // Validate Key Scopes
     const allowedScopes = agentKey.scopes || ["all-tools"];
-    const hasPermission = allowedScopes.includes("all-tools") || 
+    const hasPermission = allowedScopes.includes("all-tools") ||
       allowedScopes.includes(toolName) ||
       (allowedScopes.includes("filters:*") && toolName !== "export_image") ||
       (allowedScopes.includes("geometry:*") && ["crop_image", "circle_crop", "flip_image", "rotate_image", "straighten_photo"].includes(toolName));
 
     if (!hasPermission) {
-      telemetryStore.addLog({
-        id: "req_" + Math.random().toString(36).substring(2, 9),
+      await telemetryStore.addLog({
+        agentKeyId: agentKey.id,
         timestamp: new Date().toISOString(),
         method: "tools/call",
-        tool: toolName,
+        toolName,
         fingerprint,
         agentName: agentKey.agentName,
         signatureValid: true,
@@ -219,17 +215,17 @@ export async function POST(req: NextRequest) {
       }, { status: 403 });
     }
 
-    // Determine Cost per ADR 0005: 1 for standard, 3 for batch, 5 for high-res (>20MB)
-    const isHighRes = (toolArgs.image_base64 && toolArgs.image_base64.length > 20 * 1024 * 1024);
-    const cost = isHighRes ? 5 : toolName === "batch_filter_pipeline" ? 3 : 1;
+    // Determine Cost per ADR 0005
+    const isHighRes = Boolean(toolArgs.image_base64 && toolArgs.image_base64.length > 20 * 1024 * 1024);
+    const cost = toolName === "get_image_metadata" ? 0 : isHighRes ? 5 : toolName === "batch_filter_pipeline" ? 3 : 1;
 
     // Check Credit Balance
     if (agentKey.creditsBalance < cost) {
-      telemetryStore.addLog({
-        id: "req_" + Math.random().toString(36).substring(2, 9),
+      await telemetryStore.addLog({
+        agentKeyId: agentKey.id,
         timestamp: new Date().toISOString(),
         method: "tools/call",
-        tool: toolName,
+        toolName,
         fingerprint,
         agentName: agentKey.agentName,
         signatureValid: true,
@@ -257,7 +253,7 @@ export async function POST(req: NextRequest) {
 
       if (toolName === "get_image_metadata") {
         if (!toolArgs.image_base64) {
-          return NextResponse.json({
+          const response = NextResponse.json({
             jsonrpc,
             id,
             result: {
@@ -265,17 +261,19 @@ export async function POST(req: NextRequest) {
               isError: true
             }
           });
+          response.headers.set("x-agent-credits-remaining", agentKey.creditsBalance.toString());
+          return response;
         }
         const { parseBase64Image } = await import("@/lib/image/engine");
         const sharp = (await import("sharp")).default;
         const { buffer } = parseBase64Image(toolArgs.image_base64);
         const meta = await sharp(buffer).metadata();
-        
-        telemetryStore.addLog({
-          id: "req_" + Math.random().toString(36).substring(2, 9),
+
+        await telemetryStore.addLog({
+          agentKeyId: agentKey.id,
           timestamp: new Date().toISOString(),
           method: "tools/call",
-          tool: toolName,
+          toolName,
           fingerprint,
           agentName: agentKey.agentName,
           signatureValid: true,
@@ -301,7 +299,7 @@ export async function POST(req: NextRequest) {
 
       if (toolName === "batch_filter_pipeline") {
         if (!toolArgs.image_base64 || !Array.isArray(toolArgs.operations)) {
-          return NextResponse.json({
+          const response = NextResponse.json({
             jsonrpc,
             id,
             result: {
@@ -309,12 +307,14 @@ export async function POST(req: NextRequest) {
               isError: true
             }
           });
+          response.headers.set("x-agent-credits-remaining", agentKey.creditsBalance.toString());
+          return response;
         }
         filterResult = await processPipeline(toolArgs.image_base64, toolArgs.operations);
       } else {
         const { image_base64, output_format, ...restParams } = toolArgs;
         if (!image_base64) {
-          return NextResponse.json({
+          const response = NextResponse.json({
             jsonrpc,
             id,
             result: {
@@ -322,19 +322,21 @@ export async function POST(req: NextRequest) {
               isError: true
             }
           });
+          response.headers.set("x-agent-credits-remaining", agentKey.creditsBalance.toString());
+          return response;
         }
         filterResult = await processSingleFilter(image_base64, toolName, restParams, output_format);
       }
 
-      // Deduct Credits after successful execution
-      const deduction = keyStore.deductCredits(fingerprint, cost);
+      // Deduct Credits ONLY after successful execution
+      const deduction = await keyStore.deductCredits(fingerprint, cost, undefined, toolName);
       const latency = Math.round(performance.now() - startTime);
 
-      telemetryStore.addLog({
-        id: "req_" + Math.random().toString(36).substring(2, 9),
+      await telemetryStore.addLog({
+        agentKeyId: agentKey.id,
         timestamp: new Date().toISOString(),
         method: "tools/call",
-        tool: toolName,
+        toolName,
         fingerprint,
         agentName: agentKey.agentName,
         signatureValid: true,
@@ -370,14 +372,14 @@ export async function POST(req: NextRequest) {
       response.headers.set("x-agent-credits-remaining", deduction.remaining.toString());
       return response;
     } catch (err: any) {
-      // MCP Non-Fatal Error Contract (isError: true with recovery context)
+      // MCP Non-Fatal Error Contract (0 credits deducted on isError: true)
       const latency = Math.round(performance.now() - startTime);
 
-      telemetryStore.addLog({
-        id: "req_" + Math.random().toString(36).substring(2, 9),
+      await telemetryStore.addLog({
+        agentKeyId: agentKey.id,
         timestamp: new Date().toISOString(),
         method: "tools/call",
-        tool: toolName,
+        toolName,
         fingerprint,
         agentName: agentKey.agentName,
         signatureValid: true,

@@ -14,9 +14,17 @@ export interface ImageMetadata {
 
 export interface FilterResult {
   imageBase64: string;
+  image_base64?: string;
+  imageKey?: string;
+  image_key?: string;
+  imageUrl?: string;
+  image_url?: string;
+  publicUrl?: string;
+  public_url?: string;
   metadata: ImageMetadata;
   executionTimeMs: number;
 }
+
 
 export interface GeometryParams {
   crop?: { left: number; top: number; width: number; height: number };

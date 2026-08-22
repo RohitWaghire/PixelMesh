@@ -3,7 +3,8 @@ import { keyStore } from "@/lib/auth/key-store";
 import { verifyRequestSignature } from "@/lib/auth/agent-crypto";
 import { nonceCache } from "@/lib/auth/nonce-cache";
 import { MCP_IMAGE_TOOLS } from "@/lib/mcp/tool-schemas";
-import { processSingleFilter, processPipeline } from "@/lib/image/engine";
+import { processSingleFilter, processPipeline, resolveInputImage } from "@/lib/image/engine";
+import { jobQueue, inferJobPriority } from "@/lib/queue/job-queue";
 import { telemetryStore } from "@/lib/telemetry/store";
 
 export async function POST(req: NextRequest) {
@@ -87,7 +88,7 @@ export async function POST(req: NextRequest) {
     }, { status: nonceCheck.statusCode || 401 });
   }
 
-  // 3. Find Key in Asynchronous Prisma KeyStore
+  // 3. Find Cey in Asynchronous Prisma KeyStore
   const agentKey = await keyStore.findKeyByFingerprint(fingerprint);
   if (!agentKey || agentKey.status === "revoked") {
     await telemetryStore.addLog({
@@ -148,7 +149,6 @@ export async function POST(req: NextRequest) {
       error: { code: -32001, message: "Unauthorized: Cryptographic signature verification failed." }
     }, { status: 401 });
   }
-
   // 5. Handle MCP Protocol Methods
   if (method === "tools/list") {
     const latency = Math.round(performance.now() - startTime);
@@ -176,6 +176,7 @@ export async function POST(req: NextRequest) {
     return response;
   }
 
+
   if (method === "tools/call") {
     const toolName = params?.name;
     const toolArgs = params?.arguments || {};
@@ -184,7 +185,7 @@ export async function POST(req: NextRequest) {
     const allowedScopes = agentKey.scopes || ["all-tools"];
     const hasPermission = allowedScopes.includes("all-tools") ||
       allowedScopes.includes(toolName) ||
-      (allowedScopes.includes("filters:*") && toolName !== "export_image") ||
+      (allowedScopes.includes("filters;*") && toolName !== "export_image") ||
       (allowedScopes.includes("geometry:*") && ["crop_image", "circle_crop", "flip_image", "rotate_image", "straighten_photo"].includes(toolName));
 
     if (!hasPermission) {
@@ -216,15 +217,19 @@ export async function POST(req: NextRequest) {
     }
 
     // Determine Cost per ADR 0005
-    const isHighRes = Boolean(toolArgs.image_base64 && toolArgs.image_base64.length > 20 * 1024 * 1024);
+    const isHighRes = Boolean(
+      (toolArgs.image_base64 && toolArgs.image_base64.length > 20 * 1024 * 1024) ||
+      (toolArgs.size_bytes && toolArgs.size_bytes > 20 * 1024 * 1024)
+    );
     const cost = toolName === "get_image_metadata" ? 0 : isHighRes ? 5 : toolName === "batch_filter_pipeline" ? 3 : 1;
+
 
     // Check Credit Balance
     if (agentKey.creditsBalance < cost) {
       await telemetryStore.addLog({
         agentKeyId: agentKey.id,
         timestamp: new Date().toISOString(),
-        method: "tools/call",
+      method: "tools/call",
         toolName,
         fingerprint,
         agentName: agentKey.agentName,
@@ -248,26 +253,91 @@ export async function POST(req: NextRequest) {
       }, { status: 402 });
     }
 
+    // Check Prefer: respond-async header
+    const preferHeader = req.headers.get("prefer") || "";
+    const isAsyncPreferred = preferHeader.toLowerCase().includes("respond-async") || preferHeader.toLowerCase().includes("async");
+
+    if (isAsyncPreferred) {
+      const requestedPriority = toolArgs.priority || inferJobPriority(toolName, toolArgs);
+      const returnType = toolArgs.return_type || toolArgs.returnType || "base64";
+
+
+      const jobRecord = await jobQueue.addJob({ 
+        fingerprint: agentKey.fingerprint,
+        agentName: agentKey.agentName,
+        toolName,
+        toolArgs,
+        cost,
+        returnType,
+        priority: requestedPriority
+      }, {
+        priority: requestedPriority
+      });
+
+      const pollUrl = `/api/mcp/jobs/${jobRecord.id}`;
+      const streamUrl = `/api/mcp/jobs/${jobRecord.id}/stream`;
+
+      const latency = Math.round(performance.now() - startTime);
+      await telemetryStore.addLog({
+        agentKeyId: agentKey.id,
+        timestamp: new Date().toISOString(),
+        method: "tools/call",
+        toolName,
+        fingerprint,
+        agentName: agentKey.agentName,
+        signatureValid: true,
+        timestampDriftMs: driftMs,
+        nonce,
+        costCredits: 0,
+        creditsRemaining: agentKey.creditsBalance,
+        latencyMs: latency,
+        status: "success"
+      });
+
+      const response = NextResponse.json({
+        jsonrpc,
+        id,
+        status: "queued",
+        job_id: jobRecord.id,
+        jobId: jobRecord.id,
+        poll_url: pollUrl,
+        stream_url: streamUrl,
+        estimated_cost: cost,
+        result: {
+          status: "queued",
+          job_id: jobRecord.id,
+          jobId: jobRecord.id,
+          poll_url: pollUrl,
+          stream_url: streamUrl
+        }
+      }, { status: 202 });
+
+      response.headers.set("x-agent-credits-remaining", agentKey.creditsBalance.toString());
+      response.headers.set("Location", pollUrl);
+      return response;
+    }
+    // Synchronous Execution Flow
     try {
       let filterResult: any;
+      const hasImageInput = Boolean(toolArgs.image_base64 || toolArgs.image_key || toolArgs.image_url);
 
       if (toolName === "get_image_metadata") {
-        if (!toolArgs.image_base64) {
+        if (!hasImageInput) {
           const response = NextResponse.json({
             jsonrpc,
             id,
             result: {
-              content: [{ type: "text", text: "Invalid arguments: 'image_base64' is required." }],
+              content: [{ type: "text", text: "Invalid arguments: 'image_base64', 'image_key', or 'image_url' is required." }],
               isError: true
             }
           });
           response.headers.set("x-agent-credits-remaining", agentKey.creditsBalance.toString());
           return response;
         }
-        const { parseBase64Image } = await import("@/lib/image/engine");
+
+        const resolved = await resolveInputImage(toolArgs);
         const sharp = (await import("sharp")).default;
-        const { buffer } = parseBase64Image(toolArgs.image_base64);
-        const meta = await sharp(buffer).metadata();
+        const meta = await sharp(resolved.buffer).metadata();
 
         await telemetryStore.addLog({
           agentKeyId: agentKey.id,
@@ -297,35 +367,38 @@ export async function POST(req: NextRequest) {
         return response;
       }
 
+
+      const returnType = toolArgs.return_type || toolArgs.returnType || "base64";
+
       if (toolName === "batch_filter_pipeline") {
-        if (!toolArgs.image_base64 || !Array.isArray(toolArgs.operations)) {
+        if (!hasImageInput || !Array.isArray(toolArgs.operations)) {
           const response = NextResponse.json({
             jsonrpc,
             id,
             result: {
-              content: [{ type: "text", text: "Invalid arguments: 'image_base64' and 'operations' array are required." }],
+              content: [{ type: "text", text: "Invalid arguments: image input and 'operations' array are required." }],
               isError: true
             }
           });
           response.headers.set("x-agent-credits-remaining", agentKey.creditsBalance.toString());
           return response;
         }
-        filterResult = await processPipeline(toolArgs.image_base64, toolArgs.operations);
+        filterResult = await processPipeline(toolArgs, toolArgs.operations, toolArgs.output_format, returnType);
       } else {
-        const { image_base64, output_format, ...restParams } = toolArgs;
-        if (!image_base64) {
+        const { output_format, ...restParams } = toolArgs;
+        if (!hasImageInput) {
           const response = NextResponse.json({
             jsonrpc,
             id,
             result: {
-              content: [{ type: "text", text: "Invalid arguments: 'image_base64' is required." }],
+              content: [{ type: "text", text: "Invalid arguments: image input is required." }],
               isError: true
             }
           });
           response.headers.set("x-agent-credits-remaining", agentKey.creditsBalance.toString());
           return response;
         }
-        filterResult = await processSingleFilter(image_base64, toolName, restParams, output_format);
+        filterResult = await processSingleFilter(toolArgs, toolName, restParams, output_format, returnType);
       }
 
       // Deduct Credits ONLY after successful execution
@@ -335,7 +408,7 @@ export async function POST(req: NextRequest) {
       await telemetryStore.addLog({
         agentKeyId: agentKey.id,
         timestamp: new Date().toISOString(),
-        method: "tools/call",
+      method: "tools/call",
         toolName,
         fingerprint,
         agentName: agentKey.agentName,
@@ -348,25 +421,41 @@ export async function POST(req: NextRequest) {
         status: "success"
       });
 
+      const resResult: any = {
+        content: [
+          {
+            type: "text",
+            text: `Tool '${toolName}' executed successfully in ${filterResult.executionTimeM}ms. Metadata: ${JSON.stringify(filterResult.metadata)}`
+          }
+        ],
+        metadata: filterResult.metadata,
+        execution_time_ms: filterResult.executionTimeMs
+      };
+
+      if (filterResult.imageBase64) {
+        resResult.content.push({
+          type: "image",
+          data: filterResult.imageBase64,
+          mimeType: filterResult.metadata?.format ? `image/${filterResult.metadata.format}` : "image/png"
+        });
+        resResult.image_base64 = filterResult.imageBase64;
+        resResult.imageBase64 = filterResult.imageBase64;
+      }
+      if (filterResult.imageKey || filterResult.image_key) {
+        resResult.image_key = filterResult.image_key || filterResult.imageKey;
+        resResult.imageKey = resResult.image_key;
+      }
+      if (filterResult.imageUrl || filterResult.image_url || filterResult.publicUrl) {
+        resResult.image_url = filterResult.image_url || filterResult.imageUrl || filterResult.publicUrl;
+        resResult.imageUrl = resResult.image_url;
+        resResult.public_url = resResult.image_url;
+        resResult.publicUrl = resResult.image_url;
+      }
+
       const response = NextResponse.json({
         jsonrpc,
         id,
-        result: {
-          content: [
-            {
-              type: "text",
-              text: `Tool '${toolName}' executed successfully in ${filterResult.executionTimeMs}ms. Metadata: ${JSON.stringify(filterResult.metadata)}`
-            },
-            {
-              type: "image",
-              data: filterResult.imageBase64,
-              mimeType: filterResult.metadata?.format ? `image/${filterResult.metadata.format}` : "image/png"
-            }
-          ],
-          image_base64: filterResult.imageBase64,
-          metadata: filterResult.metadata,
-          execution_time_ms: filterResult.executionTimeMs
-        }
+        result: resResult
       });
 
       response.headers.set("x-agent-credits-remaining", deduction.remaining.toString());
@@ -378,7 +467,7 @@ export async function POST(req: NextRequest) {
       await telemetryStore.addLog({
         agentKeyId: agentKey.id,
         timestamp: new Date().toISOString(),
-        method: "tools/call",
+      method: "tools/call",
         toolName,
         fingerprint,
         agentName: agentKey.agentName,
@@ -391,6 +480,7 @@ export async function POST(req: NextRequest) {
         status: "tool_error",
         errorMessage: err.message
       });
+
 
       const response = NextResponse.json({
         jsonrpc,
@@ -425,6 +515,7 @@ export async function POST(req: NextRequest) {
       }
     });
   }
+
 
   return NextResponse.json({
     jsonrpc,

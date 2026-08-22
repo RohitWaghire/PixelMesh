@@ -1,5 +1,9 @@
 import sharp from "sharp";
+import crypto from "crypto";
+import { Readable } from "stream";
 import { FilterResult, ImageMetadata, PipelineOperation } from "./types";
+import { storageClient } from "../storage/client";
+import { ImageInputParams, ResolvedImageInput } from "../storage/types";
 import * as geometry from "./filters/geometry";
 import * as exposure from "./filters/exposure";
 import * as color from "./filters/color";
@@ -7,6 +11,9 @@ import * as effects from "./filters/effects";
 
 const MAX_IMAGE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB High-Res limit
 
+/**
+ * Parses inline base64 string or data URI into Buffer and mimeType
+ */
 export function parseBase64Image(dataUriOrBase64: string): { buffer: Buffer; mimeType: string } {
   if (!dataUriOrBase64 || typeof dataUriOrBase64 !== "string") {
     throw new Error("Invalid image input: base64 string is required.");
@@ -31,21 +38,175 @@ export function parseBase64Image(dataUriOrBase64: string): { buffer: Buffer; mim
   return { buffer, mimeType };
 }
 
+/**
+ * Formats image buffer as data URI
+ */
 export function formatBase64Result(buffer: Buffer, format: string): string {
   const mime = format === "jpeg" || format === "jpg" ? "image/jpeg" : format === "webp" ? "image/webp" : "image/png";
   return `data:${mime};base64,${buffer.toString("base64")}`;
 }
 
+/**
+ * Resolves image input from base64, storage object key, or remote HTTP URL
+ */
+export async function resolveInputImage(
+  input: string | ImageInputParams | any
+): Promise<ResolvedImageInput> {
+  if (!input) {
+    throw new Error("Invalid image input: one of 'image_base64', 'image_key', or 'image_url' is required.");
+  }
+
+  // Handle string input
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (trimmed.startsWith("data:") || (!trimmed.startsWith("http://") && !trimmed.startsWith("https://") && !trimmed.startsWith("raw/") && !trimmed.startsWith("processed/"))) {
+      try {
+        const { buffer, mimeType } = parseBase64Image(trimmed);
+        return { buffer, mimeType, sourceType: "base64" };
+      } catch (err: any) {
+        if (trimmed.includes("/") || trimmed.includes(".")) {
+          // Fall through to storage key check
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      const res = await fetch(trimmed);
+      if (!res.ok) {
+        throw new Error(`Failed to fetch image from URL: ${trimmed} (${res.status} ${res.statusText})`);
+      }
+      const arrayBuf = await res.arrayBuffer();
+      const buffer = Buffer.from(arrayBuf);
+      if (buffer.length > MAX_IMAGE_SIZE_BYTES) {
+        throw new Error(`Remote image size (${(buffer.length / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed 50MB limit.`);
+      }
+      const mimeType = res.headers.get("content-type") || "image/png";
+      return { buffer, mimeType, sourceType: "url", sourceUrl: trimmed };
+    }
+
+    // Storage key string
+    const buffer = await storageClient.getObjectBuffer(trimmed);
+    return { buffer, mimeType: "image/png", sourceType: "storage", sourceKey: trimmed };
+  }
+
+  // Handle object input
+  const base64Str = input.image_base64 || input.imageBase64;
+  const storageKey = input.image_key || input.imageKey;
+  const imageUrl = input.image_url || input.imageUrl;
+
+  if (base64Str) {
+    const { buffer, mimeType } = parseBase64Image(base64Str);
+    return { buffer, mimeType, sourceType: "base64" };
+  }
+
+  if (storageKey) {
+    const buffer = await storageClient.getObjectBuffer(storageKey);
+    return { buffer, mimeType: "image/png", sourceType: "storage", sourceKey: storageKey };
+  }
+
+  if (imageUrl) {
+    const res = await fetch(imageUrl);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch image from URL: ${imageUrl} (${res.status} ${res.statusText})`);
+    }
+    const arrayBuf = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuf);
+    if (buffer.length > MAX_IMAGE_SIZE_BYTES) {
+      throw new Error(`Remote image size (${(buffer.length / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed 50MB limit.`);
+    }
+    const mimeType = res.headers.get("content-type") || "image/png";
+    return { buffer, mimeType, sourceType: "url", sourceUrl: imageUrl };
+  }
+
+  throw new Error("Invalid image input: one of 'image_base64', 'image_key', or 'image_url' is required.");
+}
+
+/**
+ * Resolves a readable stream for the image input directly into Sharp pipeline
+ */
+export async function resolveInputStream(
+  input: string | ImageInputParams | any
+): Promise<{ stream: NodeJS.ReadableStream; mimeType: string; sourceType: "base64" | "storage" | "url" }> {
+  if (typeof input === "object" && (input.image_key || input.imageKey)) {
+    const key = input.image_key || input.imageKey;
+    const stream = await storageClient.getObjectStream(key);
+    return { stream, mimeType: "image/png", sourceType: "storage" };
+  }
+
+  const resolved = await resolveInputImage(input);
+  return {
+    stream: Readable.from(resolved.buffer),
+    mimeType: resolved.mimeType,
+    sourceType: resolved.sourceType
+  };
+}
+
+/**
+ * Stores output image directly to object storage and returns keys/urls
+ */
+export async function formatStorageResult(params: {
+  buffer: Buffer;
+  format?: string;
+  key?: string;
+  prefix?: string;
+  contentType?: string;
+}): Promise<{
+  image_key: string;
+  imageKey: string;
+  image_url: string;
+  imageUrl: string;
+  public_url: string;
+  publicUrl: string;
+  size_bytes: number;
+  sizeBytes: number;
+}> {
+  const { buffer, format = "png", prefix = "processed", contentType } = params;
+
+  let key = params.key;
+  if (!key) {
+    const now = new Date();
+    const year = now.getUTCFullYear();
+    const month = String(now.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(now.getUTCDate()).padStart(2, "0");
+    const uuid = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+    key = `${prefix}/${year}/${month}/${day}/pm_${uuid}.${format}`;
+  }
+
+  const mime = contentType || (format === "jpeg" || format === "jpg" ? "image/jpeg" : format === "webp" ? "image/webp" : "image/png");
+  const putRes = await storageClient.putObject({
+    key,
+    body: buffer,
+    contentType: mime
+  });
+
+  return {
+    image_key: putRes.key,
+    imageKey: putRes.key,
+    image_url: putRes.publicUrl,
+    imageUrl: putRes.publicUrl,
+    public_url: putRes.publicUrl,
+    publicUrl: putRes.publicUrl,
+    size_bytes: putRes.sizeBytes,
+    sizeBytes: putRes.sizeBytes
+  };
+}
+
+/**
+ * Processes a single filter operation on an image
+ */
 export async function processSingleFilter(
-  inputBase64: string,
+  input: string | ImageInputParams | any,
   tool: string,
   params: Record<string, any> = {},
-  outputFormat?: string
+  outputFormat?: string,
+  returnType?: "base64" | "storage" | "url"
 ): Promise<FilterResult> {
   const startTime = performance.now();
-  const { buffer } = parseBase64Image(inputBase64);
+  const resolved = await resolveInputImage(input);
 
-  let image = sharp(buffer);
+  let image = sharp(resolved.buffer);
   const metadata = await image.metadata();
 
   switch (tool) {
@@ -149,8 +310,12 @@ export async function processSingleFilter(
   const outMeta = await sharp(outputBuffer).metadata();
   const duration = performance.now() - startTime;
 
-  return {
-    imageBase64: formatBase64Result(outputBuffer, targetFormat),
+  const base64Result = formatBase64Result(outputBuffer, targetFormat);
+  const effectiveReturnType = returnType || (typeof input === "object" ? input.return_type || input.returnType : undefined);
+
+  const filterResult: FilterResult = {
+    imageBase64: base64Result,
+    image_base64: base64Result,
     metadata: {
       width: outMeta.width,
       height: outMeta.height,
@@ -161,26 +326,63 @@ export async function processSingleFilter(
     },
     executionTimeMs: Math.round(duration * 10) / 10
   };
+
+  if (effectiveReturnType === "storage" || effectiveReturnType === "url") {
+    const stored = await formatStorageResult({
+      buffer: outputBuffer,
+      format: targetFormat
+    });
+    filterResult.imageKey = stored.image_key;
+    filterResult.image_key = stored.image_key;
+    filterResult.imageUrl = stored.image_url;
+    filterResult.image_url = stored.image_url;
+    filterResult.publicUrl = stored.public_url;
+    filterResult.public_url = stored.public_url;
+  }
+
+  return filterResult;
 }
 
+/**
+ * Processes a sequence of pipeline filter operations on an image
+ */
 export async function processPipeline(
-  inputBase64: string,
+  input: string | ImageInputParams | any,
   operations: PipelineOperation[],
-  outputFormat?: string
+  outputFormat?: string,
+  returnType?: "base64" | "storage" | "url"
 ): Promise<FilterResult> {
   const startTime = performance.now();
-  let currentBase64 = inputBase64;
+  const effectiveReturnType = returnType || (typeof input === "object" ? input.return_type || input.returnType : undefined);
+  let currentInput: any = input;
   let finalMeta: ImageMetadata = {};
+  let lastResult: FilterResult | null = null;
 
-  for (const op of operations) {
-    const res = await processSingleFilter(currentBase64, op.tool, op.params);
-    currentBase64 = res.imageBase64;
+  for (let i = 0; i < operations.length; i++) {
+    const op = operations[i];
+    const isLast = i === operations.length - 1;
+    const res = await processSingleFilter(
+      currentInput,
+      op.tool,
+      op.params,
+      isLast ? outputFormat : undefined,
+      isLast ? effectiveReturnType : "base64"
+    );
+    currentInput = res.imageBase64;
     finalMeta = res.metadata;
+    lastResult = res;
   }
 
   const duration = performance.now() - startTime;
   return {
-    imageBase64: currentBase64,
+    imageBase64: lastResult?.imageBase64 || "",
+    image_base64: lastResult?.image_base64 || lastResult?.imageBase64 || "",
+    imageKey: lastResult?.imageKey,
+    image_key: lastResult?.image_key,
+    imageUrl: lastResult?.imageUrl,
+    image_url: lastResult?.image_url,
+    publicUrl: lastResult?.publicUrl,
+    public_url: lastResult?.public_url,
     metadata: finalMeta,
     executionTimeMs: Math.round(duration * 10) / 10
   };

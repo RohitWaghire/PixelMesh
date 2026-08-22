@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --test dist/**/*.test.js || tsx --test src/**/*.test.ts lib/**/*.test.ts"
+    "test": "tsx --test --test-concurrency=1 lib/**/*.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.1",

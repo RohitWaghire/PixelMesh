@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
+import { FILTER_TOOLS_CATALOG } from "@/lib/image/tools-catalog";
 
 export async function GET() {
+  const geometryTools = FILTER_TOOLS_CATALOG.filter(t => t.category === "geometry").map(t => t.id).join(", ");
+  const exposureTools = FILTER_TOOLS_CATALOG.filter(t => t.category === "exposure").map(t => t.id).join(", ");
+  const colorTools = FILTER_TOOLS_CATALOG.filter(t => t.category === "color").map(t => t.id).join(", ");
+  const effectsTools = FILTER_TOOLS_CATALOG.filter(t => t.category === "effects").map(t => t.id).join(", ");
+
   const content = `# PixelMesh: AI Agent-First Image Tool Mesh & Cryptographic WebMCP Gateway
 > Machine-Actionable Entry Point for Autonomous AI Agents and LLMs
 
@@ -26,10 +32,10 @@ PixelMesh provides deterministic, sub-millisecond Sharp image processing tools v
   - resources/list: Lists active registered tools and metadata
 
 ## Core Image Tools
-- Geometry: crop_image, circle_crop, rotate_image, flip_image, straighten_image
-- Exposure: adjust_brightness, adjust_contrast, adjust_gamma, adjust_exposure, lighten_image, darken_image
-- Color: make_sepia_tone, make_grayscale, invert_colors, adjust_hue, adjust_saturation, adjust_vibrance, adjust_hsl, clip_photo
-- Effects: glow_effect, sharpen_image, blur_image, noise_effect, posterize_effect
+- Geometry: ${geometryTools}
+- Exposure: ${exposureTools}
+- Color: ${colorTools}
+- Effects: ${effectsTools}
 - Pipelines: batch_filter_pipeline (atomic multi-step DAG)
 - Metadata: get_image_metadata
 
@@ -42,7 +48,7 @@ PixelMesh provides deterministic, sub-millisecond Sharp image processing tools v
 
   return new NextResponse(content, {
     headers: {
-      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Type": "text/markdown; charset=utf-8",
       "Cache-Control": "public, max-age=3600"
     }
   });

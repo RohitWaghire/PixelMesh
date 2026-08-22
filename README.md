@@ -282,6 +282,17 @@ npm run build
 npm run start
 ```
 
+### Docker Deployment
+Run PixelMesh inside an isolated, production-ready container:
+```bash
+# Build multi-stage Docker container
+docker build -t pixelmesh:latest .
+
+# Run container exposed on port 3000
+docker run -p 3000:3000 pixelmesh:latest
+```
+
+
 ---
 
 ## 🗺️ Roadmap & Architecture Decisions

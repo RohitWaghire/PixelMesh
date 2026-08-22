@@ -6,6 +6,7 @@ import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 import HeroSplitDemo from "@/components/landing/HeroSplitDemo";
 import ConfigHub from "@/components/dashboard/ConfigHub";
+import { FILTER_TOOLS_CATALOG } from "@/lib/image/tools-catalog";
 import { 
   Sparkles, 
   ArrowRight, 
@@ -20,7 +21,9 @@ import {
   Check, 
   Sliders, 
   ExternalLink,
-  ChevronRight
+  ChevronRight,
+  CreditCard,
+  CheckCircle2
 } from "lucide-react";
 
 export default function Home() {
@@ -33,36 +36,82 @@ export default function Home() {
     setTimeout(() => setCopiedCli(false), 2000);
   };
 
-  const catalog = {
-    geometry: [
-      { name: "crop_image", desc: "Extract precise bounding box coordinates with sub-pixel alignment." },
-      { name: "circle_crop", desc: "Circular alpha masking with custom background fills." },
-      { name: "rotate_image", desc: "Arbitrary angle rotation with auto canvas dimension recalibration." },
-      { name: "flip_image", desc: "Horizontal and vertical mirroring in one operation." },
-      { name: "straighten_image", desc: "Fine horizon perspective alignment with auto-crop boundaries." }
-    ],
-    exposure: [
-      { name: "adjust_brightness", desc: "Linear luminance scaling across pixel channels." },
-      { name: "adjust_contrast", desc: "Dynamic range compression and expansion around midtones." },
-      { name: "adjust_gamma", desc: "Non-linear power-law curve adjustment for deep shadow extraction." },
-      { name: "adjust_exposure", desc: "Photographic stop adjustments (-4.0 to +4.0 EV)." },
-      { name: "lighten_image", desc: "Targeted highlight recovery and shadow lift." }
-    ],
-    color: [
-      { name: "make_sepia_tone", desc: "Calibrated vintage warm monochrome color matrix." },
-      { name: "make_grayscale", desc: "Rec.709 human-perceptual luminance conversion." },
-      { name: "invert_colors", desc: "High-contrast photonegative spectrum inversion." },
-      { name: "adjust_hue", desc: "360° circular color wheel phase shifting." },
-      { name: "adjust_saturation", desc: "Chroma intensity modulation from muted to hyper-vivid." }
-    ],
-    effects: [
-      { name: "glow_effect", desc: "Multi-pass bloom synthesis via Gaussian blur add-compositing." },
-      { name: "sharpen_image", desc: "Unsharp mask high-frequency edge definition enhancement." },
-      { name: "blur_image", desc: "High-performance Gaussian blur filtering up to sigma 100." },
-      { name: "noise_effect", desc: "Controlled Gaussian or uniform film grain injection." },
-      { name: "posterize_effect", desc: "Quantized color palette reduction with dynamic LUT tables." }
-    ]
-  };
+  const filteredTools = FILTER_TOOLS_CATALOG.filter((t) => t.category === activeCatalogTab);
+
+  const pricingTiers = [
+    {
+      name: "Free Starter",
+      price: "$0",
+      period: "forever",
+      description: "Zero-human autonomous agent self-registration with instant test credits.",
+      credits: "100 Credits",
+      badge: "Instant Enrolled",
+      features: [
+        "100 instant free credits",
+        "Ed25519 & RSA signature auth",
+        "All 22+ atomic Sharp filters",
+        "1 concurrent agent stream",
+        "Public community support"
+      ],
+      cta: "Self-Register Now",
+      href: "/dashboard",
+      popular: false
+    },
+    {
+      name: "Developer Pack",
+      price: "$10",
+      period: "/ month",
+      description: "For individual builders and agent developers running continuous test loops.",
+      credits: "2,500 Credits",
+      badge: "Indie Builders",
+      features: [
+        "2,500 monthly credits",
+        "5 concurrent agent connections",
+        "50MB payload threshold",
+        "Batch DAG pipeline execution",
+        "Persistent API key store"
+      ],
+      cta: "Upgrade to Dev",
+      href: "/dashboard",
+      popular: false
+    },
+    {
+      name: "Production Pool",
+      price: "$49",
+      period: "/ month",
+      description: "For high-throughput multi-agent systems and commercial autonomous pipelines.",
+      credits: "15,000 Credits",
+      badge: "Recommended",
+      features: [
+        "15,000 monthly credits",
+        "25 concurrent agent streams",
+        "Sub-10ms priority execution",
+        "Webhook usage alerts",
+        "Dedicated rate-limit headroom"
+      ],
+      cta: "Deploy Production",
+      href: "/dashboard",
+      popular: true
+    },
+    {
+      name: "Enterprise Cluster",
+      price: "$199",
+      period: "/ month",
+      description: "Dedicated infrastructure, custom libvips C++ extensions, and SLA guarantees.",
+      credits: "75,000 Credits",
+      badge: "Scale & SLA",
+      features: [
+        "75,000 monthly credits",
+        "Unlimited concurrency",
+        "Custom Sharp C++ filters",
+        "Dedicated isolated instance",
+        "24/7 priority SLA support"
+      ],
+      cta: "Contact Enterprise",
+      href: "/docs",
+      popular: false
+    }
+  ];
 
   return (
     <div className="min-h-screen flex flex-col bg-[#09090b] text-zinc-100 selection:bg-emerald-500/30">
@@ -192,7 +241,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* 22+ Native Tools Catalog Section */}
+      {/* 22+ Native Tools Catalog Section (Centralized from FILTER_TOOLS_CATALOG) */}
       <section className="py-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full space-y-8">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
@@ -222,21 +271,21 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Tool Cards */}
+        {/* Dynamic Tool Cards from catalog */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {catalog[activeCatalogTab].map((item) => (
+          {filteredTools.map((item) => (
             <div
-              key={item.name}
+              key={item.id}
               className="p-4 rounded-xl border border-zinc-800/80 bg-zinc-900/40 hover:border-zinc-700 transition space-y-2"
             >
               <div className="flex items-center justify-between">
                 <span className="font-mono text-xs font-bold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-900/50">
-                  {item.name}
+                  {item.id}
                 </span>
                 <span className="text-[10px] font-mono text-zinc-400">1 Credit</span>
               </div>
               <p className="text-xs text-zinc-300 leading-relaxed">
-                {item.desc}
+                {item.description}
               </p>
             </div>
           ))}
@@ -251,6 +300,86 @@ export default function Home() {
             <span>View Full Docs</span>
             <ChevronRight className="w-3.5 h-3.5" />
           </Link>
+        </div>
+      </section>
+
+      {/* 4-Tier Pricing Grid (§2.1) */}
+      <section className="border-t border-zinc-800/80 bg-zinc-950/60 py-16 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto space-y-12">
+          <div className="text-center max-w-2xl mx-auto space-y-2">
+            <div className="inline-flex items-center gap-1.5 text-xs font-mono text-emerald-400">
+              <CreditCard className="w-3.5 h-3.5" />
+              <span>TRANSPARENT USAGE PRICING</span>
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">
+              Pay Only For Compute Credits
+            </h2>
+            <p className="text-xs sm:text-sm text-zinc-400">
+              1 credit per standard filter execution, 3 credits for multi-filter batch pipelines.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {pricingTiers.map((tier) => (
+              <div
+                key={tier.name}
+                className={`rounded-2xl p-6 flex flex-col justify-between border transition ${
+                  tier.popular
+                    ? "bg-zinc-900/80 border-emerald-500/60 shadow-xl shadow-emerald-950/30 relative"
+                    : "bg-zinc-900/30 border-zinc-800 hover:border-zinc-700"
+                }`}
+              >
+                {tier.popular && (
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full bg-emerald-500 text-black font-bold text-[10px] uppercase font-mono tracking-wider">
+                    Most Popular
+                  </span>
+                )}
+
+                <div className="space-y-4">
+                  <div>
+                    <span className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider">{tier.badge}</span>
+                    <h3 className="text-lg font-bold text-white mt-0.5">{tier.name}</h3>
+                  </div>
+
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-3xl font-extrabold text-white">{tier.price}</span>
+                    <span className="text-xs text-zinc-400">{tier.period}</span>
+                  </div>
+
+                  <div className="text-xs font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-900/40 px-2.5 py-1 rounded-lg">
+                    {tier.credits}
+                  </div>
+
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    {tier.description}
+                  </p>
+
+                  <ul className="space-y-2 text-xs text-zinc-300 pt-3 border-t border-zinc-800/80">
+                    {tier.features.map((feat) => (
+                      <li key={feat} className="flex items-center gap-2">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                        <span>{feat}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="pt-6 mt-6 border-t border-zinc-800/80">
+                  <Link
+                    href={tier.href}
+                    className={`w-full py-2 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+                      tier.popular
+                        ? "bg-emerald-500 hover:bg-emerald-400 text-black shadow-md shadow-emerald-950/50"
+                        : "bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700"
+                    }`}
+                  >
+                    <span>{tier.cta}</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 

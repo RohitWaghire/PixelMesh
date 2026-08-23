@@ -11,6 +11,7 @@ node_modules/
 .env.development.local
 .env.test.local
 .env.production.local
+.keys/
 
 # Debug logs
 npm-debug.log*
@@ -24,3 +25,4 @@ next-env.d.ts
 # OS Files
 .DS_Store
 Thumbs.db
+

@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "crypto";
 import { keyStore } from "@/lib/auth/key-store";
 import { verifyRequestSignature } from "@/lib/auth/agent-crypto";
 import { nonceCache } from "@/lib/auth/nonce-cache";
 import { MCP_IMAGE_TOOLS } from "@/lib/mcp/tool-schemas";
-import { processSingleFilter, processPipeline } from "@/lib/image/engine";
+import { processSingleFilter, processPipeline, resolveInputImage } from "@/lib/image/engine";
+import { jobQueue, inferJobPriority } from "@/lib/queue/job-queue";
 import { telemetryStore } from "@/lib/telemetry/store";
 
 export async function POST(req: NextRequest) {
@@ -29,13 +31,12 @@ export async function POST(req: NextRequest) {
   const nonce = req.headers.get("x-agent-nonce");
   const signature = req.headers.get("x-agent-signature");
 
-  // 1. Authenticate Request
+  // 1. Authenticate Request Headers
   if (!fingerprint || !timestampStr || !nonce || !signature) {
-    const errorEntry = {
-      id: "req_" + Math.random().toString(36).substring(2, 9),
+    await telemetryStore.addLog({
       timestamp: new Date().toISOString(),
       method: method || "unknown",
-      tool: params?.name,
+      toolName: params?.name,
       fingerprint: fingerprint || "anonymous",
       agentName: "Unknown Agent",
       signatureValid: false,
@@ -44,10 +45,9 @@ export async function POST(req: NextRequest) {
       costCredits: 0,
       creditsRemaining: 0,
       latencyMs: Math.round(performance.now() - startTime),
-      status: "auth_error" as const,
+      status: "auth_error",
       errorMessage: "Missing required SSH cryptographic headers (x-agent-key-fingerprint, x-agent-timestamp, x-agent-nonce, x-agent-signature)"
-    };
-    telemetryStore.addLog(errorEntry);
+    });
 
     return NextResponse.json({
       jsonrpc,
@@ -63,14 +63,13 @@ export async function POST(req: NextRequest) {
   const nowSec = Math.floor(Date.now() / 1000);
   const driftMs = (nowSec - timestampNum) * 1000;
 
-  // 2. Anti-Replay Check
-  const nonceCheck = nonceCache.checkAndRecord(nonce, timestampNum);
+  // 2. Anti-Replay and Clock Skew Check via Distributed Nonce Cache
+  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum);
   if (!nonceCheck.valid) {
-    telemetryStore.addLog({
-      id: "req_" + Math.random().toString(36).substring(2, 9),
+    await telemetryStore.addLog({
       timestamp: new Date().toISOString(),
       method: method || "unknown",
-      tool: params?.name,
+      toolName: params?.name,
       fingerprint,
       agentName: "Unknown",
       signatureValid: false,
@@ -87,17 +86,16 @@ export async function POST(req: NextRequest) {
       jsonrpc,
       id,
       error: { code: -32001, message: `Unauthorized: ${nonceCheck.reason}` }
-    }, { status: 401 });
+    }, { status: nonceCheck.statusCode || 401 });
   }
 
-  // 3. Find Key in Keyring
-  const agentKey = keyStore.findKeyByFingerprint(fingerprint);
+  // 3. Find Cey in Asynchronous Prisma KeyStore
+  const agentKey = await keyStore.findKeyByFingerprint(fingerprint);
   if (!agentKey || agentKey.status === "revoked") {
-    telemetryStore.addLog({
-      id: "req_" + Math.random().toString(36).substring(2, 9),
+    await telemetryStore.addLog({
       timestamp: new Date().toISOString(),
       method: method || "unknown",
-      tool: params?.name,
+      toolName: params?.name,
       fingerprint,
       agentName: "Unknown",
       signatureValid: false,
@@ -129,11 +127,11 @@ export async function POST(req: NextRequest) {
   });
 
   if (!isValidSig) {
-    telemetryStore.addLog({
-      id: "req_" + Math.random().toString(36).substring(2, 9),
+    await telemetryStore.addLog({
+      agentKeyId: agentKey.id,
       timestamp: new Date().toISOString(),
       method: method || "unknown",
-      tool: params?.name,
+      toolName: params?.name,
       fingerprint,
       agentName: agentKey.agentName,
       signatureValid: false,
@@ -152,12 +150,11 @@ export async function POST(req: NextRequest) {
       error: { code: -32001, message: "Unauthorized: Cryptographic signature verification failed." }
     }, { status: 401 });
   }
-
   // 5. Handle MCP Protocol Methods
   if (method === "tools/list") {
     const latency = Math.round(performance.now() - startTime);
-    telemetryStore.addLog({
-      id: "req_" + Math.random().toString(36).substring(2, 9),
+    await telemetryStore.addLog({
+      agentKeyId: agentKey.id,
       timestamp: new Date().toISOString(),
       method: "tools/list",
       fingerprint,
@@ -180,23 +177,24 @@ export async function POST(req: NextRequest) {
     return response;
   }
 
+
   if (method === "tools/call") {
     const toolName = params?.name;
     const toolArgs = params?.arguments || {};
 
-    // Validate Key Scopes (CONTEXT.md Scope Permission Boundary)
+    // Validate Key Scopes
     const allowedScopes = agentKey.scopes || ["all-tools"];
-    const hasPermission = allowedScopes.includes("all-tools") || 
+    const hasPermission = allowedScopes.includes("all-tools") ||
       allowedScopes.includes(toolName) ||
-      (allowedScopes.includes("filters:*") && toolName !== "export_image") ||
+      (allowedScopes.includes("filters;*") && toolName !== "export_image") ||
       (allowedScopes.includes("geometry:*") && ["crop_image", "circle_crop", "flip_image", "rotate_image", "straighten_photo"].includes(toolName));
 
     if (!hasPermission) {
-      telemetryStore.addLog({
-        id: "req_" + Math.random().toString(36).substring(2, 9),
+      await telemetryStore.addLog({
+        agentKeyId: agentKey.id,
         timestamp: new Date().toISOString(),
         method: "tools/call",
-        tool: toolName,
+        toolName,
         fingerprint,
         agentName: agentKey.agentName,
         signatureValid: true,
@@ -219,17 +217,21 @@ export async function POST(req: NextRequest) {
       }, { status: 403 });
     }
 
-    // Determine Cost per ADR 0005: 1 for standard, 3 for batch, 5 for high-res (>20MB)
-    const isHighRes = (toolArgs.image_base64 && toolArgs.image_base64.length > 20 * 1024 * 1024);
-    const cost = isHighRes ? 5 : toolName === "batch_filter_pipeline" ? 3 : 1;
+    // Determine Cost per ADR 0005
+    const isHighRes = Boolean(
+      (toolArgs.image_base64 && toolArgs.image_base64.length > 20 * 1024 * 1024) ||
+      (toolArgs.size_bytes && toolArgs.size_bytes > 20 * 1024 * 1024)
+    );
+    const cost = toolName === "get_image_metadata" ? 0 : isHighRes ? 5 : toolName === "batch_filter_pipeline" ? 3 : 1;
+
 
     // Check Credit Balance
     if (agentKey.creditsBalance < cost) {
-      telemetryStore.addLog({
-        id: "req_" + Math.random().toString(36).substring(2, 9),
+      await telemetryStore.addLog({
+        agentKeyId: agentKey.id,
         timestamp: new Date().toISOString(),
-        method: "tools/call",
-        tool: toolName,
+      method: "tools/call",
+        toolName,
         fingerprint,
         agentName: agentKey.agentName,
         signatureValid: true,
@@ -252,30 +254,156 @@ export async function POST(req: NextRequest) {
       }, { status: 402 });
     }
 
-    try {
-      let filterResult: any;
+    // Check Prefer: respond-async header
+    const preferHeader = req.headers.get("prefer") || "";
+    const isAsyncPreferred = preferHeader.toLowerCase().includes("respond-async") || preferHeader.toLowerCase().includes("async");
 
-      if (toolName === "get_image_metadata") {
-        if (!toolArgs.image_base64) {
+    if (isAsyncPreferred) {
+      const requestedPriority = toolArgs.priority || inferJobPriority(toolName, toolArgs);
+      const returnType = toolArgs.return_type || toolArgs.returnType || "base64";
+      const asyncJobId = `job_${Date.now().toString(36)}_${crypto.randomBytes(6).toString("hex")}`;
+      let asyncCreditsRemaining = agentKey.creditsBalance;
+
+      if (cost > 0) {
+        const deduction = await keyStore.deductCredits(
+          fingerprint,
+          cost,
+          asyncJobId,
+          toolName
+        );
+
+        if (!deduction.success) {
+          await telemetryStore.addLog({
+            agentKeyId: agentKey.id,
+            timestamp: new Date().toISOString(),
+            method: "tools/call",
+            toolName,
+            fingerprint,
+            agentName: agentKey.agentName,
+            signatureValid: true,
+            timestampDriftMs: driftMs,
+            nonce,
+            costCredits: 0,
+            creditsRemaining: deduction.remaining,
+            latencyMs: Math.round(performance.now() - startTime),
+            status: "rate_limited",
+            errorMessage: deduction.error || `Insufficient credits (requires ${cost})`
+          });
+
           return NextResponse.json({
             jsonrpc,
             id,
+            error: {
+              code: -32002,
+              message: `Insufficient Credits. Required: ${cost}, Available: ${deduction.remaining}. Top up credits in the dashboard.`
+            }
+          }, { status: 402 });
+        }
+
+        asyncCreditsRemaining = deduction.remaining;
+      }
+
+      let jobRecord;
+      try {
+        jobRecord = await jobQueue.addJob({ 
+          id: asyncJobId,
+          fingerprint: agentKey.fingerprint,
+          agentName: agentKey.agentName,
+          toolName,
+          toolArgs,
+          cost,
+          costDeducted: cost,
+          returnType,
+          priority: requestedPriority
+        }, {
+          priority: requestedPriority
+        });
+      } catch (enqueueErr: any) {
+        if (cost > 0) {
+          try {
+            await keyStore.refundCredits(
+              fingerprint,
+              cost,
+              `refund-enqueue-${asyncJobId}`,
+              `Refund for enqueue failure: ${enqueueErr.message}`
+            );
+          } catch (refundErr) {
+            console.error(`[McpRoute] Failed to refund ${cost} credits on enqueue failure:`, refundErr);
+          }
+        }
+        throw enqueueErr;
+      }
+
+      const pollUrl = `/api/mcp/jobs/${jobRecord.id}`;
+      const streamUrl = `/api/mcp/jobs/${jobRecord.id}/stream`;
+
+      const latency = Math.round(performance.now() - startTime);
+      await telemetryStore.addLog({
+        agentKeyId: agentKey.id,
+        timestamp: new Date().toISOString(),
+        method: "tools/call",
+        toolName,
+        fingerprint,
+        agentName: agentKey.agentName,
+        signatureValid: true,
+        timestampDriftMs: driftMs,
+        nonce,
+        costCredits: cost,
+        creditsRemaining: asyncCreditsRemaining,
+        latencyMs: latency,
+        status: "success"
+      });
+
+      const response = NextResponse.json({
+        jsonrpc,
+        id,
+        status: "queued",
+        job_id: jobRecord.id,
+        jobId: jobRecord.id,
+        poll_url: pollUrl,
+        stream_url: streamUrl,
+        estimated_cost: cost,
+        result: {
+          status: "queued",
+          job_id: jobRecord.id,
+          jobId: jobRecord.id,
+          poll_url: pollUrl,
+          stream_url: streamUrl
+        }
+      }, { status: 202 });
+
+      response.headers.set("x-agent-credits-remaining", agentKey.creditsBalance.toString());
+      response.headers.set("Location", pollUrl);
+      return response;
+    }
+    // Synchronous Execution Flow
+    try {
+      let filterResult: any;
+      const hasImageInput = Boolean(toolArgs.image_base64 || toolArgs.image_key || toolArgs.image_url);
+
+      if (toolName === "get_image_metadata") {
+        if (!hasImageInput) {
+          const response = NextResponse.json({
+            jsonrpc,
+            id,
             result: {
-              content: [{ type: "text", text: "Invalid arguments: 'image_base64' is required." }],
+              content: [{ type: "text", text: "Invalid arguments: 'image_base64', 'image_key', or 'image_url' is required." }],
               isError: true
             }
           });
+          response.headers.set("x-agent-credits-remaining", agentKey.creditsBalance.toString());
+          return response;
         }
-        const { parseBase64Image } = await import("@/lib/image/engine");
+
+        const resolved = await resolveInputImage(toolArgs);
         const sharp = (await import("sharp")).default;
-        const { buffer } = parseBase64Image(toolArgs.image_base64);
-        const meta = await sharp(buffer).metadata();
-        
-        telemetryStore.addLog({
-          id: "req_" + Math.random().toString(36).substring(2, 9),
+        const meta = await sharp(resolved.buffer).metadata();
+
+        await telemetryStore.addLog({
+          agentKeyId: agentKey.id,
           timestamp: new Date().toISOString(),
           method: "tools/call",
-          tool: toolName,
+          toolName,
           fingerprint,
           agentName: agentKey.agentName,
           signatureValid: true,
@@ -299,85 +427,141 @@ export async function POST(req: NextRequest) {
         return response;
       }
 
+
+      const returnType = toolArgs.return_type || toolArgs.returnType || "base64";
+
       if (toolName === "batch_filter_pipeline") {
-        if (!toolArgs.image_base64 || !Array.isArray(toolArgs.operations)) {
-          return NextResponse.json({
+        if (!hasImageInput || !Array.isArray(toolArgs.operations)) {
+          const response = NextResponse.json({
             jsonrpc,
             id,
             result: {
-              content: [{ type: "text", text: "Invalid arguments: 'image_base64' and 'operations' array are required." }],
+              content: [{ type: "text", text: "Invalid arguments: image input and 'operations' array are required." }],
               isError: true
             }
           });
+          response.headers.set("x-agent-credits-remaining", agentKey.creditsBalance.toString());
+          return response;
         }
-        filterResult = await processPipeline(toolArgs.image_base64, toolArgs.operations);
+        filterResult = await processPipeline(toolArgs, toolArgs.operations, toolArgs.output_format, returnType);
       } else {
-        const { image_base64, output_format, ...restParams } = toolArgs;
-        if (!image_base64) {
-          return NextResponse.json({
+        const { output_format, ...restParams } = toolArgs;
+        if (!hasImageInput) {
+          const response = NextResponse.json({
             jsonrpc,
             id,
             result: {
-              content: [{ type: "text", text: "Invalid arguments: 'image_base64' is required." }],
+              content: [{ type: "text", text: "Invalid arguments: image input is required." }],
               isError: true
             }
           });
+          response.headers.set("x-agent-credits-remaining", agentKey.creditsBalance.toString());
+          return response;
         }
-        filterResult = await processSingleFilter(image_base64, toolName, restParams, output_format);
+        filterResult = await processSingleFilter(toolArgs, toolName, restParams, output_format, returnType);
       }
 
-      // Deduct Credits after successful execution
-      const deduction = keyStore.deductCredits(fingerprint, cost);
+      // Reconcile Cost dynamically based on resolved input image size (ADR 0005)
+      const inputBytes = filterResult.inputSizeBytes || (toolArgs.image_base64 ? Math.round(toolArgs.image_base64.length * 0.75) : 0);
+      const isActualHighRes = inputBytes > 20 * 1024 * 1024;
+      const actualCost = toolName === "get_image_metadata" ? 0 : isActualHighRes ? 5 : toolName === "batch_filter_pipeline" ? 3 : 1;
+
+      // Deduct Credits ONLY after successful execution
+      const deduction = await keyStore.deductCredits(fingerprint, actualCost, undefined, toolName);
+      if (!deduction.success) {
+        await telemetryStore.addLog({
+          agentKeyId: agentKey.id,
+          timestamp: new Date().toISOString(),
+          method: "tools/call",
+          toolName,
+          fingerprint,
+          agentName: agentKey.agentName,
+          signatureValid: true,
+          timestampDriftMs: driftMs,
+          nonce,
+          costCredits: 0,
+          creditsRemaining: deduction.remaining,
+          latencyMs: Math.round(performance.now() - startTime),
+          status: "rate_limited",
+          errorMessage: deduction.error || "Insufficient credits during settlement."
+        });
+
+        return NextResponse.json({
+          jsonrpc,
+          id,
+          error: {
+            code: -32002,
+            message: `Insufficient Credits: ${deduction.error || "Unable to settle credits. Please top up your balance."}`
+          }
+        }, { status: 402 });
+      }
+
       const latency = Math.round(performance.now() - startTime);
 
-      telemetryStore.addLog({
-        id: "req_" + Math.random().toString(36).substring(2, 9),
+      await telemetryStore.addLog({
+        agentKeyId: agentKey.id,
         timestamp: new Date().toISOString(),
-        method: "tools/call",
-        tool: toolName,
+      method: "tools/call",
+        toolName,
         fingerprint,
         agentName: agentKey.agentName,
         signatureValid: true,
         timestampDriftMs: driftMs,
         nonce,
-        costCredits: cost,
+        costCredits: actualCost,
         creditsRemaining: deduction.remaining,
         latencyMs: latency,
         status: "success"
       });
 
+      const resResult: any = {
+        content: [
+          {
+            type: "text",
+            text: `Tool '${toolName}' executed successfully in ${filterResult.executionTimeMs}ms. Metadata: ${JSON.stringify(filterResult.metadata)}`
+          }
+        ],
+        metadata: filterResult.metadata,
+        execution_time_ms: filterResult.executionTimeMs
+      };
+
+      if (filterResult.imageBase64) {
+        resResult.content.push({
+          type: "image",
+          data: filterResult.imageBase64,
+          mimeType: filterResult.metadata?.format ? `image/${filterResult.metadata.format}` : "image/png"
+        });
+        resResult.image_base64 = filterResult.imageBase64;
+        resResult.imageBase64 = filterResult.imageBase64;
+      }
+      if (filterResult.imageKey || filterResult.image_key) {
+        resResult.image_key = filterResult.image_key || filterResult.imageKey;
+        resResult.imageKey = resResult.image_key;
+      }
+      if (filterResult.imageUrl || filterResult.image_url || filterResult.publicUrl) {
+        resResult.image_url = filterResult.image_url || filterResult.imageUrl || filterResult.publicUrl;
+        resResult.imageUrl = resResult.image_url;
+        resResult.public_url = resResult.image_url;
+        resResult.publicUrl = resResult.image_url;
+      }
+
       const response = NextResponse.json({
         jsonrpc,
         id,
-        result: {
-          content: [
-            {
-              type: "text",
-              text: `Tool '${toolName}' executed successfully in ${filterResult.executionTimeMs}ms. Metadata: ${JSON.stringify(filterResult.metadata)}`
-            },
-            {
-              type: "image",
-              data: filterResult.imageBase64,
-              mimeType: filterResult.metadata?.format ? `image/${filterResult.metadata.format}` : "image/png"
-            }
-          ],
-          image_base64: filterResult.imageBase64,
-          metadata: filterResult.metadata,
-          execution_time_ms: filterResult.executionTimeMs
-        }
+        result: resResult
       });
 
       response.headers.set("x-agent-credits-remaining", deduction.remaining.toString());
       return response;
     } catch (err: any) {
-      // MCP Non-Fatal Error Contract (isError: true with recovery context)
+      // MCP Non-Fatal Error Contract (0 credits deducted on isError: true)
       const latency = Math.round(performance.now() - startTime);
 
-      telemetryStore.addLog({
-        id: "req_" + Math.random().toString(36).substring(2, 9),
+      await telemetryStore.addLog({
+        agentKeyId: agentKey.id,
         timestamp: new Date().toISOString(),
-        method: "tools/call",
-        tool: toolName,
+      method: "tools/call",
+        toolName,
         fingerprint,
         agentName: agentKey.agentName,
         signatureValid: true,
@@ -389,6 +573,7 @@ export async function POST(req: NextRequest) {
         status: "tool_error",
         errorMessage: err.message
       });
+
 
       const response = NextResponse.json({
         jsonrpc,
@@ -423,6 +608,7 @@ export async function POST(req: NextRequest) {
       }
     });
   }
+
 
   return NextResponse.json({
     jsonrpc,

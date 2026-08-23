@@ -4,6 +4,11 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "PixelMesh — WebMCP Image Studio & Cryptographic Gateway",
   description: "AI Agent-First Image Tool Mesh with SSH-style Asymmetric Cryptographic Authentication",
+  icons: {
+    icon: "/icon.png",
+    shortcut: "/icon.png",
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({

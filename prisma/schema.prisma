@@ -1,0 +1,160 @@
+// ============================================================================
+// PixelMesh - Prisma Schema Definition
+// Database: PostgreSQL
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------------------------------
+// Enums
+// ----------------------------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum KeyAlgorithm {
+  ed25519
+  rsa
+}
+
+enum KeyStatus {
+  active
+  revoked
+}
+
+enum TransactionType {
+  FREE_GRANT
+  USAGE_DEDUCTION
+  TOP_UP
+  REFUND
+  ADMIN_ADJUSTMENT
+}
+
+enum AuditStatus {
+  success
+  auth_error
+  tool_error
+  rate_limited
+}
+
+// ----------------------------------------------------------------------------
+// Models
+// ----------------------------------------------------------------------------
+
+model Organization {
+  id        String     @id @default(cuid())
+  name      String
+  slug      String     @unique
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  users     User[]
+  agentKeys AgentKey[]
+
+  @@map("organizations")
+}
+
+model User {
+  id             String        @id @default(cuid())
+  email          String        @unique
+  name           String?
+  role           UserRole      @default(MEMBER)
+  organizationId String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  // Relations
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  agentKeys      AgentKey[]
+
+  @@index([organizationId])
+  @@map("users")
+}
+
+model AgentKey {
+  id               String              @id @default(cuid())
+  fingerprint      String              @unique
+  agentName        String
+  publicKeyPem     String              @db.Text
+  algorithm        KeyAlgorithm        @default(ed25519)
+  creditsBalance   Int                 @default(100)
+  scopes           String[]            @default(["all-tools"])
+  totalInvocations Int                 @default(0)
+  status           KeyStatus           @default(active)
+  organizationId   String?
+  userId           String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  lastUsedAt       DateTime?
+
+  // Relations
+  organization       Organization?       @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  user               User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  creditTransactions CreditTransaction[]
+  auditLogs          AuditLog[]
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([status])
+  @@map("agent_keys")
+}
+
+model CreditTransaction {
+  id           String          @id @default(cuid())
+  agentKeyId   String
+  amount       Int
+  balanceAfter Int
+  type         TransactionType
+  referenceId  String?
+  createdAt    DateTime        @default(now())
+
+  // Relations
+  agentKey     AgentKey        @relation(fields: [agentKeyId], references: [id], onDelete: Cascade)
+
+  @@index([agentKeyId])
+  @@index([createdAt])
+  @@index([type])
+  @@index([referenceId])
+  @@map("credit_transactions")
+}
+
+model AuditLog {
+  id               String       @id @default(cuid())
+  agentKeyId       String?
+  fingerprint      String
+  agentName        String
+  method           String
+  toolName         String?
+  status           AuditStatus
+  latencyMs        Int
+  costCredits      Int          @default(0)
+  creditsRemaining Int          @default(0)
+  timestampDriftMs Int          @default(0)
+  nonce            String
+  ipAddress        String?
+  errorMessage     String?      @db.Text
+  signatureValid   Boolean      @default(false)
+  createdAt        DateTime     @default(now())
+
+  // Relations
+  agentKey         AgentKey?    @relation(fields: [agentKeyId], references: [id], onDelete: SetNull)
+
+  @@index([fingerprint])
+  @@index([agentKeyId])
+  @@index([createdAt])
+  @@index([status])
+  @@index([toolName])
+  @@index([nonce])
+  @@map("audit_logs")
+}

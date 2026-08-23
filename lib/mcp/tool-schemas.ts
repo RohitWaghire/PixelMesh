@@ -16,6 +16,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 data URI or raw base64 string of the image" },
+        image_key: { type: "string", description: "Direct storage object key (e.g. raw/2026/08/asset.png)" },
+        image_url: { type: "string", description: "Remote public HTTP/HTTPS image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional return format (base64 data URI, storage key, or presigned URL)" },
         left: { type: "number", description: "X coordinate of top-left corner (px)", default: 0 },
         top: { type: "number", description: "Y coordinate of top-left corner (px)", default: 0 },
         width: { type: "number", description: "Width of cropped rectangle (px)" },
@@ -32,9 +35,12 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         radius: { type: "number", description: "Circle radius in px" },
         centerX: { type: "number", description: "Center X coordinate (default image center)" },
-        centerY: { type: "number", description: "Center Y coordinate (default image center)" }
+        centerY: { type: "number", description: "Center Y\ coordinate (default image center)" }
       },
       required: ["image_base64"]
     }
@@ -46,6 +52,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         direction: { type: "string", enum: ["horizontal", "vertical"], description: "Flip axis" }
       },
       required: ["image_base64", "direction"]
@@ -58,6 +67,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         degrees: { type: "number", description: "Rotation angle in degrees" },
         background: { type: "string", description: "Background fill color for non-alpha images (e.g. #000000)" }
       },
@@ -66,23 +78,29 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
   },
   {
     name: "straighten_photo",
-    description: "Micro-rotate an image (-15° to +15°) to align horizons and straighten perspective.",
+    description: "Perform micro-angle rotation and crop straightening (-15 to +15 deg).",
     inputSchema: {
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
-        angle: { type: "number", description: "Straightening angle in degrees" }
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
+        angle: { type: "number", description: "Straightening angle (-15 to +15)" }
       },
       required: ["image_base64", "angle"]
     }
   },
   {
     name: "adjust_brightness",
-    description: "Modify the overall brightness/illumination factor of the image.",
+    description: "Modify the brightness of an image.",
     inputSchema: {
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         factor: { type: "number", description: "Brightness factor (-100 to 100)" }
       },
       required: ["image_base64", "factor"]
@@ -90,11 +108,14 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
   },
   {
     name: "lighten_photo",
-    description: "Lighten shadows and midtones in the photo.",
+    description: "Increase midtone and shadow brightness.",
     inputSchema: {
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         amount: { type: "number", description: "Lighten amount (0 to 100)" }
       },
       required: ["image_base64", "amount"]
@@ -107,6 +128,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         amount: { type: "number", description: "Darken amount (0 to 100)" }
       },
       required: ["image_base64", "amount"]
@@ -119,6 +143,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         stops: { type: "number", description: "Exposure stops (-5 to +5)" }
       },
       required: ["image_base64", "stops"]
@@ -131,6 +158,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         factor: { type: "number", description: "Contrast factor (-100 to 100)" }
       },
       required: ["image_base64", "factor"]
@@ -143,6 +173,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         gamma: { type: "number", description: "Gamma value (0.1 to 3.0)" }
       },
       required: ["image_base64", "gamma"]
@@ -154,7 +187,10 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        image_base64: { type: "string", description: "Base64 image data" }
+        image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" }
       },
       required: ["image_base64"]
     }
@@ -166,6 +202,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         threshold: { type: "number", description: "B&W threshold level (0 to 255)", default: 128 }
       },
       required: ["image_base64"]
@@ -178,6 +217,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         intensity: { type: "number", description: "Sepia intensity (0 to 100)", default: 80 }
       },
       required: ["image_base64"]
@@ -189,7 +231,10 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        image_base64: { type: "string", description: "Base64 image data" }
+        image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" }
       },
       required: ["image_base64"]
     }
@@ -201,6 +246,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         degrees: { type: "number", description: "Degrees to rotate hue (-180 to 180)" }
       },
       required: ["image_base64", "degrees"]
@@ -213,6 +261,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         factor: { type: "number", description: "Saturation factor (-100 to 100)" }
       },
       required: ["image_base64", "factor"]
@@ -225,6 +276,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         factor: { type: "number", description: "Vibrance factor (-100 to 100)" }
       },
       required: ["image_base64", "factor"]
@@ -237,6 +291,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         min: { type: "number", description: "Minimum floor value (0 to 255)", default: 15 },
         max: { type: "number", description: "Maximum ceiling value (0 to 255)", default: 240 }
       },
@@ -250,6 +307,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         hue: { type: "number", description: "Hue rotation in degrees" },
         saturation: { type: "number", description: "Saturation factor (-100 to 100)" },
         lightness: { type: "number", description: "Lightness factor (-100 to 100)" }
@@ -264,6 +324,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         sigma: { type: "number", description: "Sharpen sigma radius", default: 1.5 }
       },
       required: ["image_base64"]
@@ -276,6 +339,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         sigma: { type: "number", description: "Gaussian blur sigma", default: 5 }
       },
       required: ["image_base64", "sigma"]
@@ -288,6 +354,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         intensity: { type: "number", description: "Grain intensity (0 to 100)", default: 25 }
       },
       required: ["image_base64"]
@@ -300,6 +369,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         levels: { type: "number", description: "Quantization levels (2 to 32)", default: 4 }
       },
       required: ["image_base64"]
@@ -312,6 +384,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         intensity: { type: "number", description: "Glow intensity (0 to 100)", default: 50 },
         radius: { type: "number", description: "Bloom radius in px", default: 10 }
       },
@@ -324,7 +399,10 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        image_base64: { type: "string", description: "Base64 image data" }
+        image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" }
       },
       required: ["image_base64"]
     }
@@ -336,6 +414,9 @@ export const MCP_IMAGE_TOOLS: MCPToolDefinition[] = [
       type: "object",
       properties: {
         image_base64: { type: "string", description: "Base64 image data" },
+        image_key: { type: "string", description: "Storage object key" },
+        image_url: { type: "string", description: "Remote image URL" },
+        return_type: { type: "string", enum: ["base64", "storage", "url"], description: "Optional output format" },
         operations: {
           type: "array",
           items: {

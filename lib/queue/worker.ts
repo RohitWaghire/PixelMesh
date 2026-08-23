@@ -413,10 +413,12 @@ export class QueueWorker extends EventEmitter {
       throw new NonRetryableJobError(`Scope permission denied for tool '${toolName}'.`);
     }
 
-    // 3. Pre-flight Credit Balance Check (Do NOT deduct yet!)
-    if (agentKey.creditsBalance < cost) {
+    // 3. Pre-flight Credit Balance Check (Account for pre-reserved credits)
+    const reservedCost = (payload as any).costDeducted || 0;
+    const effectiveRemainingCost = Math.max(0, cost - reservedCost);
+    if (agentKey.creditsBalance < effectiveRemainingCost) {
       throw new NonRetryableJobError(
-        `Insufficient credits. Required: ${cost}, Available: ${agentKey.creditsBalance}.`
+        `Insufficient credits. Required: ${effectiveRemainingCost}, Available: ${agentKey.creditsBalance}.`
       );
     }
 
@@ -497,7 +499,6 @@ export class QueueWorker extends EventEmitter {
     }
 
     // 5. ATOMIC CREDIT SETTLEMENT: Check if already reserved at enqueue, or deduct now
-    const reservedCost = (payload as any).costDeducted || 0;
     let deductionRemaining = agentKey.creditsBalance;
 
     if (cost > 0 && reservedCost < cost) {

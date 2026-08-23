@@ -240,6 +240,8 @@ function makePinnedHttpRequest(
           const location = res.headers.location;
           cleanup();
           isSettled = true;
+          res.destroy(); // Terminate incoming response body stream immediately
+          req.destroy(); // Terminate underlying socket connection immediately
           return resolve({
             buffer: Buffer.alloc(0),
             mimeType: "",
@@ -249,11 +251,19 @@ function makePinnedHttpRequest(
         }
 
         if (statusCode < 200 || statusCode >= 300) {
+          cleanup();
+          isSettled = true;
+          res.destroy();
+          req.destroy();
           return fail(new Error(`Failed to fetch image from URL: ${targetUrl.toString()} (${statusCode} ${res.statusMessage || ""})`));
         }
 
         const contentLength = res.headers["content-length"];
         if (contentLength && parseInt(contentLength, 10) > maxSizeBytes) {
+          cleanup();
+          isSettled = true;
+          res.destroy();
+          req.destroy();
           return fail(
             new Error(
               `Remote image size (${(parseInt(contentLength, 10) / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed ${(maxSizeBytes / (1024 * 1024)).toFixed(0)}MB limit.`
@@ -267,7 +277,10 @@ function makePinnedHttpRequest(
           resetInactivityTimer();
           totalBytes += chunk.length;
           if (totalBytes > maxSizeBytes) {
+            cleanup();
+            isSettled = true;
             res.destroy();
+            req.destroy();
             return fail(
               new Error(
                 `Remote image size (${(totalBytes / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed ${(maxSizeBytes / (1024 * 1024)).toFixed(0)}MB limit.`
@@ -288,7 +301,12 @@ function makePinnedHttpRequest(
           });
         });
 
-        res.on("error", (err) => fail(err));
+        res.on("error", (err) => {
+          cleanup();
+          isSettled = true;
+          req.destroy();
+          fail(err);
+        });
       }
     );
 
@@ -299,20 +317,26 @@ function makePinnedHttpRequest(
 
 /**
  * Safely fetches a remote image with socket-level DNS pinning, redirect bounds,
- * wall-clock stream deadlines, and chunk-by-chunk stream capping.
+ * cumulative wall-clock stream deadlines, and chunk-by-chunk stream capping.
  */
 export async function fetchSafeRemoteImage(
   urlString: string,
-  maxSizeBytes: number = MAX_IMAGE_SIZE_BYTES
+  maxSizeBytes: number = MAX_IMAGE_SIZE_BYTES,
+  overallTimeoutMs: number = 15000
 ): Promise<{ buffer: Buffer; mimeType: string }> {
   let currentUrl = urlString;
   let redirectCount = 0;
   const MAX_REDIRECTS = 3;
+  const overallDeadline = Date.now() + overallTimeoutMs;
 
   while (true) {
-    const parsed = await validateSafeRemoteUrl(currentUrl);
+    const remainingMs = overallDeadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error(`Remote image fetch timed out: exceeded total ${Math.round(overallTimeoutMs / 1000)}s deadline across redirects (${currentUrl})`);
+    }
 
-    const result = await makePinnedHttpRequest(parsed, maxSizeBytes);
+    const parsed = await validateSafeRemoteUrl(currentUrl);
+    const result = await makePinnedHttpRequest(parsed, maxSizeBytes, remainingMs);
 
     // Handle Redirects with per-hop validation
     if (result.statusCode >= 300 && result.statusCode < 400) {

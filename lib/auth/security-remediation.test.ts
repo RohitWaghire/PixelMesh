@@ -12,12 +12,15 @@ import { NextRequest } from "next/server";
 import { POST as registerHandler } from "../../app/api/auth/register/route";
 import { POST as studioProcessHandler } from "../../app/api/studio/process/route";
 import { POST as jobsPostHandler } from "../../app/api/mcp/jobs/route";
+import { jobQueue } from "../queue/job-queue";
+import { QueueWorker } from "../queue/worker";
 
 beforeEach(async () => {
   resetMockDb();
   resetMockRedis();
   inMemoryRateLimiter.reset();
   await nonceCache.clear();
+  await jobQueue.reset();
 });
 
 test("sec-remediation: key re-registration strictly preserves credit balance and prevents infinite credits", async () => {
@@ -322,4 +325,74 @@ test("sec-remediation: fetchSafeRemoteImage socket DNS pinning rejects private I
     },
     /SSRF Violation/
   );
+});
+
+test("sec-remediation: reserved job executes successfully through QueueWorker when caller balance hits 0 after reservation", async () => {
+  const keypair = generateAgentKeypair("ed25519");
+  const agent = await keyStore.registerKey({
+    agentName: "Zero Balance Remaining Agent",
+    publicKeyPem: keypair.publicKeyPem,
+    initialCredits: 1 // Exactly 1 credit!
+  });
+
+  const payloadBody = JSON.stringify({
+    tool: "grayscale_image",
+    arguments: {
+      image_base64: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    }
+  });
+
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const nonce = `zero-bal-nonce-${Math.random().toString(36).substring(2, 9)}`;
+  const signature = signRequestPayload({
+    privateKeyPem: keypair.privateKeyPem,
+    method: "POST",
+    path: "/api/mcp/jobs",
+    timestamp,
+    nonce,
+    body: payloadBody
+  });
+
+  const req = new NextRequest("http://localhost:3000/api/mcp/jobs", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-agent-key-fingerprint": agent.fingerprint,
+      "x-agent-timestamp": timestamp,
+      "x-agent-nonce": nonce,
+      "x-agent-signature": signature
+    },
+    body: payloadBody
+  });
+
+  // 1. Submit job: 1 credit is reserved, leaving balance === 0
+  const submitRes = await jobsPostHandler(req);
+  assert.equal(submitRes.status, 202);
+  const submitJson = await submitRes.json();
+  assert.ok(submitJson.job_id);
+
+  const keyAfterSubmit = await keyStore.findKeyByFingerprint(agent.fingerprint);
+  assert.equal(keyAfterSubmit?.creditsBalance, 0, "Balance must be 0 after reservation");
+
+  // 2. Start worker and verify worker processes the job successfully without failing preflight
+  const worker = new QueueWorker(jobQueue, { pollIntervalMs: 50, concurrency: 1 });
+  worker.start();
+
+  try {
+    let completedJob: any = null;
+    for (let i = 0; i < 40; i++) {
+      const job = await jobQueue.getJob(submitJson.job_id);
+      if (job && (job.status === "completed" || job.status === "failed")) {
+        completedJob = job;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    assert.ok(completedJob, "Job must complete");
+    assert.equal(completedJob.status, "completed", `Job should succeed, but failed with: ${completedJob.error}`);
+    assert.equal(completedJob.costDeducted, 1);
+  } finally {
+    await worker.stop();
+  }
 });

@@ -74,6 +74,10 @@ export class S3StorageAdapter implements StorageAdapter {
       return this.customClient;
     }
 
+    if (!this.accessKeyId || !this.secretAccessKey) {
+      return null;
+    }
+
     try {
       // Dynamic import to prevent crash when @aws-sdk/client-s3 is not installed
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -81,10 +85,10 @@ export class S3StorageAdapter implements StorageAdapter {
       this.customClient = new S3Client({
         region: this.region,
         endpoint: this.endpoint,
-        credentials: this.accessKeyId && this.secretAccessKey ? {
+        credentials: {
           accessKeyId: this.accessKeyId,
           secretAccessKey: this.secretAccessKey
-        } : undefined,
+        },
         forcePathStyle: Boolean(this.endpoint)
       });
       return this.customClient;

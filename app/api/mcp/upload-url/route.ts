@@ -185,6 +185,7 @@ export async function POST(req: NextRequest) {
       success: true,
       upload_url: uploadResult.uploadUrl,
       image_key: uploadResult.imageKey,
+      key: uploadResult.imageKey,
       public_url: uploadResult.publicUrl,
       method: "PUT",
       headers: uploadResult.headers || {

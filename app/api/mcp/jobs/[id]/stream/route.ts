@@ -6,7 +6,7 @@ import { jobQueue } from "@/lib/queue/job-queue";
 
 export async function GET(
   req: NextRequest,
-  context: { params: Promise<{ id: string }> | { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
 

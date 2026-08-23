@@ -897,20 +897,28 @@ function determineIfMockDb(): boolean {
 
 function createPrismaInstance(): { client: PrismaClientLike; isMock: boolean } {
   const useMock = determineIfMockDb();
+  const isProduction = process.env.NODE_ENV === "production";
+  const allowMock = process.env.ALLOW_MOCK_IN_PRODUCTION === "true";
+  const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build" || process.env.BUILD_PHASE === "true";
 
   if (useMock) {
+    if (isProduction && !allowMock && !isBuildPhase) {
+      throw new Error("[Prisma] FATAL: Production requires a valid DATABASE_URL PostgreSQL connection. Refusing to boot with in-memory mock.");
+    }
     return { client: new InMemoryPrismaClient(), isMock: true };
   }
 
   try {
     // Dynamic import to prevent crash when @prisma/client is not yet generated or available
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { PrismaClient } = require("@prisma/client");
     const realClient = new PrismaClient({
       log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"],
     });
     return { client: realClient as unknown as PrismaClientLike, isMock: false };
   } catch (err) {
+    if (isProduction && !allowMock && !isBuildPhase) {
+      throw new Error(`[Prisma] FATAL: Production failed to initialize @prisma/client: ${(err as Error).message}`);
+    }
     console.warn("[Prisma] @prisma/client not available or initialization failed. Falling back to InMemoryPrismaClient.", err);
     return { client: new InMemoryPrismaClient(), isMock: true };
   }

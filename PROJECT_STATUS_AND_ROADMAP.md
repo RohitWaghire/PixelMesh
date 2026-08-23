@@ -179,10 +179,10 @@ Provide a distinct, optimized interface for human visitors (landing page, intera
 - **Interactive Code Generator**: Real-time cURL, Python (`requests`), Node.js (`fetch`), and MCP JSON-RPC payload generator reflecting whatever tool/slider parameters the human adjusts in the UI.
 
 ### 2.3 Authenticated Developer Console (`/dashboard`)
-- **Protected Multi-Tenant Workspace**: Authenticated via NextAuth / Clerk (GitHub, Google, or Magic Link).
+- **Protected Multi-Tenant Workspace**: Authenticated via NextAuth (Auth.js v5) with GitHub/Google OAuth and Email Magic Links, backed by Prisma `User` & `Organization` models.
 - **Keyring & Agent Fleet Manager**: Manage multiple registered Agent Public Keys, generate local Ed25519 pairs, download `.pem` files, and set per-agent spending limits.
-- **Billing & Stripe Top-up**: Real-time credit balance tracker, automated auto-refill rules, Stripe invoices.
-- **Live Stream Inspector & APM**: Real-time WebSocket/SSE telemetry feed of incoming signed requests, latency graphs, and cryptographic verification audits.
+- **Billing & Lemon Squeezy Top-up**: Real-time credit balance tracker, automated refill rules, and Lemon Squeezy customer billing portal.
+- **Live Stream Inspector & APM**: Real-time Redis Pub/Sub SSE telemetry stream (`/api/telemetry/stream`), latency graphs, and cryptographic verification audits.
 
 ### 2.4 Interactive Documentation Portal (`/docs`)
 - **Quickstart & Integration Guides**: Step-by-step setup walkthroughs for Claude Desktop, Cursor IDE, LangChain, and AutoGen.
@@ -250,34 +250,27 @@ Decouple compute-heavy image transformations from Next.js HTTP server threads to
 
 ---
 
-## Phase 3: Monetization & Automated Billing
+## Phase 4: Monetization & Automated Billing (Lemon Squeezy MoR)
 
 ### Goal
-Provide both human-friendly payment flows (Stripe) and agent-native autonomous micropayment protocols (x402 / Web3), enabling automatic revenue collection without manual credit management.
+Provide automated revenue collection and credit package sales via Lemon Squeezy as Merchant of Record (MoR), handling global tax compliance, automated webhooks, and ledger reconciliation without manual credit management.
 
-### 3.1 Stripe Checkout & Automated Webhook Infrastructure
+### 4.1 Lemon Squeezy Hosted Checkout & Webhook Infrastructure
 - **Self-Service Credit Packages**:
-  - Tier 1: $10 for 5,000 credits
-  - Tier 2: $49 for 30,000 credits
-  - Tier 3: $199 for 150,000 credits + Dedicated Queue
-- **Stripe Webhook Gateway (`/api/webhooks/stripe`)**:
-  - Validates `stripe-signature` header.
-  - Handles `checkout.session.completed` and `invoice.payment_succeeded`.
-  - Atomically credits the agent key / organization and records a ledger transaction in `CreditTransaction`.
-  - Supports automated balance auto-refill triggers (e.g. automatically charge $20 whenever balance dips below 500 credits).
+  - Starter Pack: $10 for 5,000 credits
+  - Pro Studio Pack: $49 for 30,000 credits
+  - Enterprise Fleet Pack: $199 for 150,000 credits + Dedicated Queue
+- **Lemon Squeezy Webhook Gateway (`/api/webhooks/lemonsqueezy`)**:
+  - Validates `x-signature` header via HMAC SHA-256 (`LEMONSQUEEZY_WEBHOOK_SECRET`).
+  - Handles `order_created`, `order_refunded`, and `subscription_payment_success` events.
+  - Extracts custom payload data (`custom_data: { agent_key_fingerprint, user_id, organization_id }`).
+  - Atomically credits the agent key / organization in `AgentKey` and creates an audit record in `CreditTransaction`.
+  - Supports automated balance auto-refill triggers and threshold alerts.
 
-### 3.2 Machine-to-Machine Autonomous Micropayments (x402 / Web3)
-- **HTTP 402 Payment Required Protocol**:
-  - When an uncredited agent invokes `/api/mcp`, the server returns `402 Payment Required` with a payment invoice challenge in `WWW-Authenticate: L402` or `X-402-Payment-Required`.
-- **Supported Payment Vectors**:
-  - Lightning Network L402 (macaroons + Lightning invoice).
-  - Web3 / USDC micropayment authorization headers (EIP-712 / Solana signed transfer proofs).
-  - Agent settles invoice programmatically and retries tool call in milliseconds without human interaction.
-
-### 3.3 Advanced Usage Metering & Velocity Dashboard
+### 4.2 Advanced Usage Metering & Velocity Dashboard
 - Per-tool cost breakdown charts (e.g., Geometry vs. Composite Glow filters).
 - Daily/weekly token and credit burn velocity graphs.
-- Configurable webhook alerts (e.g., Slack/Discord alert when key balance falls below 10%).
+- Real-time credit consumption alerts and invoice download links.
 
 ---
 
@@ -359,7 +352,7 @@ Drive ecosystem adoption by publishing PixelMesh to official MCP registries, rel
 | **Human vs. Agent UX**| Shared raw dashboard on root (`/`) | High-converting Landing Page (`/`) + Public Studio Sandbox (`/studio`) + Auth Console (`/dashboard`) |
 | **Image Compute** | Synchronous inside Next.js API thread | Ephemeral worker pool powered by BullMQ & Redis queues |
 | **Payload Transport** | In-line Base64 strings in JSON-RPC | Direct Cloudflare R2 / S3 pre-signed URL binary streaming |
-| **Monetization** | Simulated dashboard top-up buttons | Stripe Checkout / Webhooks + x402 / Web3 micropayments |
+| **Monetization** | Simulated dashboard top-up buttons | Lemon Squeezy Hosted Checkout / Webhooks + Credit Packages |
 | **Bot Defense** | Unthrottled `/api/auth/register` | Cloudflare Turnstile (Web) + PoW Challenge & IP limits (Agent) |
 | **Telemetry & APM** | 100 in-memory entries | Redis Streams SSE + OpenTelemetry + Sentry + Grafana |
 | **Deployment** | Local `npm run dev` | Multi-stage Docker + GitHub Actions CI/CD |

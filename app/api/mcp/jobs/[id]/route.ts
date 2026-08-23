@@ -19,40 +19,45 @@ export async function GET(
   const nonce = req.headers.get("x-agent-nonce");
   const signature = req.headers.get("x-agent-signature");
 
-  if (fingerprint && timestampStr && nonce && signature) {
-    const timestampNum = parseInt(timestampStr, 10);
-    const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum);
-    if (!nonceCheck.valid) {
-      return NextResponse.json({
-        success: false,
-        error: `Unauthorized: ${nonceCheck.reason}`
-      }, { status: nonceCheck.statusCode || 401 });
-    }
+  if (!fingerprint || !timestampStr || !nonce || !signature) {
+    return NextResponse.json({
+      success: false,
+      error: "Unauthorized: Missing required SSH cryptographic headers."
+    }, { status: 401 });
+  }
 
-    const agentKey = await keyStore.findKeyByFingerprint(fingerprint);
-    if (!agentKey || agentKey.status === "revoked") {
-      return NextResponse.json({
-        success: false,
-        error: "Unauthorized: Agent key not found or revoked."
-      }, { status: 401 });
-    }
+  const timestampNum = parseInt(timestampStr, 10);
+  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum);
+  if (!nonceCheck.valid) {
+    return NextResponse.json({
+      success: false,
+      error: `Unauthorized: ${nonceCheck.reason}`
+    }, { status: nonceCheck.statusCode || 401 });
+  }
 
-    const isValidSig = verifyRequestSignature({
-      publicKeyPem: agentKey.publicKeyPem,
-      signature,
-      method: "GET",
-      path: `/api/mcp/jobs/${id}`,
-      timestamp: timestampStr,
-      nonce,
-      body: ""
-    });
+  const agentKey = await keyStore.findKeyByFingerprint(fingerprint);
+  if (!agentKey || agentKey.status === "revoked") {
+    return NextResponse.json({
+      success: false,
+      error: "Unauthorized: Agent key not found or revoked."
+    }, { status: 401 });
+  }
 
-    if (!isValidSig) {
-      return NextResponse.json({
-        success: false,
-        error: "Unauthorized: Cryptographic signature verification failed."
-      }, { status: 401 });
-    }
+  const isValidSig = verifyRequestSignature({
+    publicKeyPem: agentKey.publicKeyPem,
+    signature,
+    method: "GET",
+    path: `/api/mcp/jobs/${id}`,
+    timestamp: timestampStr,
+    nonce,
+    body: ""
+  });
+
+  if (!isValidSig) {
+    return NextResponse.json({
+      success: false,
+      error: "Unauthorized: Cryptographic signature verification failed."
+    }, { status: 401 });
   }
 
   const job = await jobQueue.getJob(id);
@@ -61,6 +66,16 @@ export async function GET(
       success: false,
       error: `Job with ID '${id}' not found.`
     }, { status: 404 });
+  }
+
+  const isOwner = job.fingerprint === fingerprint;
+  const isAdmin = agentKey.scopes?.includes("admin");
+
+  if (!isOwner && !isAdmin) {
+    return NextResponse.json({
+      success: false,
+      error: "Forbidden: You do not have permission to access this job."
+    }, { status: 403 });
   }
 
   const response = NextResponse.json({

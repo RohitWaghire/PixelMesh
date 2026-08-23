@@ -399,10 +399,24 @@ test("challenger-sse: Client aborts during active job processing cleanly teardow
     const ac = new AbortController();
     abortControllers.push(ac);
 
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const nonce = `stream-abort-nonce-${i}-${Math.random().toString(36).substring(2, 7)}`;
+    const sig = signRequestPayload({
+      privateKeyPem: keypair.privateKeyPem,
+      method: "GET",
+      path: `/api/mcp/jobs/${jobId}/stream`,
+      timestamp: ts,
+      nonce,
+      body: ""
+    });
+
     const sseReq = new NextRequest(`http://localhost:3000/api/mcp/jobs/${jobId}/stream`, {
       method: "GET",
       headers: {
-        "x-agent-key-fingerprint": agent.fingerprint
+        "x-agent-key-fingerprint": agent.fingerprint,
+        "x-agent-timestamp": ts,
+        "x-agent-nonce": nonce,
+        "x-agent-signature": sig
       },
       signal: ac.signal
     });
@@ -466,8 +480,25 @@ test("challenger-sse: Rapid 50-client connect/abort churn has zero memory leak o
   // 50 rapid sequential connect and abort cycles
   for (let i = 0; i < 50; i++) {
     const ac = new AbortController();
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const nonce = `churn-nonce-${i}-${Math.random().toString(36).substring(2, 7)}`;
+    const sig = signRequestPayload({
+      privateKeyPem: keypair.privateKeyPem,
+      method: "GET",
+      path: `/api/mcp/jobs/${jobId}/stream`,
+      timestamp: ts,
+      nonce,
+      body: ""
+    });
+
     const sseReq = new NextRequest(`http://localhost:3000/api/mcp/jobs/${jobId}/stream`, {
       method: "GET",
+      headers: {
+        "x-agent-key-fingerprint": agent.fingerprint,
+        "x-agent-timestamp": ts,
+        "x-agent-nonce": nonce,
+        "x-agent-signature": sig
+      },
       signal: ac.signal
     });
 

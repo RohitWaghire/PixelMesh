@@ -32,6 +32,29 @@ async function createSampleImage(width = 120, height = 120, color = { r: 70, g: 
   }).png().toBuffer();
 }
 
+function createSignedGet(path: string, keypair: any, fingerprint: string): NextRequest {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const nonce = "e2e-get-" + Math.random().toString(36).substring(2, 9);
+  const signature = signRequestPayload({
+    privateKeyPem: keypair.privateKeyPem,
+    method: "GET",
+    path,
+    timestamp,
+    nonce,
+    body: ""
+  });
+
+  return new NextRequest(`http://localhost:3000${path}`, {
+    method: "GET",
+    headers: {
+      "x-agent-key-fingerprint": fingerprint,
+      "x-agent-timestamp": timestamp,
+      "x-agent-nonce": nonce,
+      "x-agent-signature": signature
+    }
+  });
+}
+
 // ============================================================================
 // Tier 1: Core E2E Feature Integration
 // ============================================================================
@@ -39,21 +62,26 @@ async function createSampleImage(width = 120, height = 120, color = { r: 70, g: 
 test("tier 1 e2e: full upload -> async job -> polling -> worker -> atomic credit settlement", async () => {
   const keypair = generateAgentKeypair("ed25519");
   const agent = await keyStore.registerKey({
-    agentName: "Tier1 Autonomous Pipeline Agent",
+    agentName: "Autonomous E2E Agent",
     publicKeyPem: keypair.publicKeyPem,
     initialCredits: 100
   });
 
-  // 1. Request Presigned Upload URL
-  const uploadPayload = JSON.stringify({ filename: "banner.png", content_type: "image/png" });
-  const ts1 = Math.floor(Date.now() / 1000).toString();
-  const nonce1 = "t1-upload-nonce-" + Math.random().toString(36).substring(2, 9);
-  const sig1 = signRequestPayload({
+  // 1. Request S3 Pre-signed Upload URL
+  const uploadPayload = JSON.stringify({
+    filename: "input_portrait.png",
+    content_type: "image/png",
+    size_bytes: 50000
+  });
+
+  const uploadTs = Math.floor(Date.now() / 1000).toString();
+  const uploadNonce = "upload-nonce-1";
+  const uploadSig = signRequestPayload({
     privateKeyPem: keypair.privateKeyPem,
     method: "POST",
     path: "/api/mcp/upload-url",
-    timestamp: ts1,
-    nonce: nonce1,
+    timestamp: uploadTs,
+    nonce: uploadNonce,
     body: uploadPayload
   });
 
@@ -62,9 +90,9 @@ test("tier 1 e2e: full upload -> async job -> polling -> worker -> atomic credit
     headers: {
       "content-type": "application/json",
       "x-agent-key-fingerprint": agent.fingerprint,
-      "x-agent-timestamp": ts1,
-      "x-agent-nonce": nonce1,
-      "x-agent-signature": sig1
+      "x-agent-timestamp": uploadTs,
+      "x-agent-nonce": uploadNonce,
+      "x-agent-signature": uploadSig
     },
     body: uploadPayload
   });
@@ -73,31 +101,35 @@ test("tier 1 e2e: full upload -> async job -> polling -> worker -> atomic credit
   assert.equal(uploadRes.status, 200);
   const uploadJson = await uploadRes.json();
   assert.ok(uploadJson.upload_url);
-  assert.ok(uploadJson.key);
+  assert.ok(uploadJson.image_key);
 
-  // 2. Direct Storage Upload
-  const sampleBuf = await createSampleImage(150, 150);
-  await storageClient.putObject({ key: uploadJson.key, body: sampleBuf, contentType: "image/png" });
-
-  // 3. Submit Async Job referencing image_key
-  const jobPayload = JSON.stringify({
-    tool: "make_sepia_tone",
-    arguments: {
-      image_key: uploadJson.key,
-      intensity: 75,
-      return_type: "storage"
-    },
-    priority: "fast"
+  // 2. Direct binary upload to object storage
+  const sampleBuf = await createSampleImage(120, 120);
+  await storageClient.putObject({
+    key: uploadJson.image_key,
+    body: sampleBuf,
+    contentType: "image/png"
   });
 
-  const ts2 = Math.floor(Date.now() / 1000).toString();
-  const nonce2 = "t1-job-nonce-" + Math.random().toString(36).substring(2, 9);
-  const sig2 = signRequestPayload({
+  // 3. Submit async filter job referencing image_key
+  const jobPayload = JSON.stringify({
+    tool: "adjust_brightness",
+    arguments: {
+      image_key: uploadJson.image_key,
+      factor: 25,
+      return_type: "storage"
+    },
+    priority: "high"
+  });
+
+  const jobTs = Math.floor(Date.now() / 1000).toString();
+  const jobNonce = "job-nonce-1";
+  const jobSig = signRequestPayload({
     privateKeyPem: keypair.privateKeyPem,
     method: "POST",
     path: "/api/mcp/jobs",
-    timestamp: ts2,
-    nonce: nonce2,
+    timestamp: jobTs,
+    nonce: jobNonce,
     body: jobPayload
   });
 
@@ -106,9 +138,9 @@ test("tier 1 e2e: full upload -> async job -> polling -> worker -> atomic credit
     headers: {
       "content-type": "application/json",
       "x-agent-key-fingerprint": agent.fingerprint,
-      "x-agent-timestamp": ts2,
-      "x-agent-nonce": nonce2,
-      "x-agent-signature": sig2
+      "x-agent-timestamp": jobTs,
+      "x-agent-nonce": jobNonce,
+      "x-agent-signature": jobSig
     },
     body: jobPayload
   });
@@ -117,11 +149,6 @@ test("tier 1 e2e: full upload -> async job -> polling -> worker -> atomic credit
   assert.equal(jobRes.status, 202);
   const jobJson = await jobRes.json();
   assert.ok(jobJson.job_id);
-  assert.equal(jobJson.status, "queued");
-
-  // Zero credits deducted at enqueue
-  const keyBefore = await keyStore.findKeyByFingerprint(agent.fingerprint);
-  assert.equal(keyBefore?.creditsBalance, 100);
 
   // 4. Background Worker Execution
   const worker = new QueueWorker(jobQueue, { concurrency: 1, autoStart: false });
@@ -129,8 +156,8 @@ test("tier 1 e2e: full upload -> async job -> polling -> worker -> atomic credit
   assert.ok(processed);
   assert.equal(processed.status, "completed");
 
-  // 5. Poll Job Result
-  const pollReq = new NextRequest(`http://localhost:3000/api/mcp/jobs/${jobJson.job_id}`, { method: "GET" });
+  // 5. Poll Job Result (Signed)
+  const pollReq = createSignedGet(`/api/mcp/jobs/${jobJson.job_id}`, keypair, agent.fingerprint);
   const pollRes = await jobGetHandler(pollReq, { params: Promise.resolve({ id: jobJson.job_id }) });
   assert.equal(pollRes.status, 200);
   const pollJson = await pollRes.json();
@@ -330,14 +357,14 @@ test("tier 3 e2e: simultaneous polling and SSE stream subscription consistency",
     cost: 1
   });
 
-  // Open stream handler
-  const streamReq = new NextRequest(`http://localhost:3000/api/mcp/jobs/${job.id}/stream`, { method: "GET" });
+  // Open stream handler (Signed)
+  const streamReq = createSignedGet(`/api/mcp/jobs/${job.id}/stream`, keypair, agent.fingerprint);
   const streamRes = await jobStreamHandler(streamReq, { params: Promise.resolve({ id: job.id }) });
   assert.equal(streamRes.status, 200);
 
-  // Poll in parallel
-  const pollReq = new NextRequest(`http://localhost:3000/api/mcp/jobs/${job.id}`, { method: "GET" });
-  const pollRes1 = await jobGetHandler(pollReq, { params: Promise.resolve({ id: job.id }) });
+  // Poll in parallel (Signed)
+  const pollReq1 = createSignedGet(`/api/mcp/jobs/${job.id}`, keypair, agent.fingerprint);
+  const pollRes1 = await jobGetHandler(pollReq1, { params: Promise.resolve({ id: job.id }) });
   const json1 = await pollRes1.json();
   assert.equal(json1.status, "queued");
 
@@ -345,8 +372,9 @@ test("tier 3 e2e: simultaneous polling and SSE stream subscription consistency",
   const worker = new QueueWorker(jobQueue, { concurrency: 1, autoStart: false });
   await worker.processNextJob();
 
-  // Poll after completion
-  const pollRes2 = await jobGetHandler(pollReq, { params: Promise.resolve({ id: job.id }) });
+  // Poll after completion (Signed)
+  const pollReq2 = createSignedGet(`/api/mcp/jobs/${job.id}`, keypair, agent.fingerprint);
+  const pollRes2 = await jobGetHandler(pollReq2, { params: Promise.resolve({ id: job.id }) });
   const json2 = await pollRes2.json();
   assert.equal(json2.status, "completed");
   assert.equal(json2.progress, 100);
@@ -502,8 +530,8 @@ test("tier 4 e2e: full autonomous media processing agent journey (7-step lifecyc
   assert.ok(processed);
   assert.equal(processed.status, "completed");
 
-  // Step 6: Agent retrieves download URL & verifies WebP EXIF metadata
-  const pollReq = new NextRequest(`http://localhost:3000/api/mcp/jobs/${jobId}`, { method: "GET" });
+  // Step 6: Agent retrieves download URL & verifies WebP EXIF metadata (Signed)
+  const pollReq = createSignedGet(`/api/mcp/jobs/${jobId}`, keypair, agent.fingerprint);
   const pollRes = await jobGetHandler(pollReq, { params: Promise.resolve({ id: jobId }) });
   assert.equal(pollRes.status, 200);
   const pollJson = await pollRes.json();

@@ -298,11 +298,13 @@ export function determineRedisBackend(): RedisBackendType {
 
 function createRedisInstance(): { client: RedisClientInterface; backend: RedisBackendType } {
   const backend = determineRedisBackend();
+  const isProduction = process.env.NODE_ENV === "production";
+  const allowMock = process.env.ALLOW_MOCK_IN_PRODUCTION === "true";
+  const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build" || process.env.BUILD_PHASE === "true";
 
   if (backend === "upstash") {
     try {
       // Dynamic import to prevent crash when @upstash/redis is optional/missing
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { Redis: UpstashRedis } = require("@upstash/redis");
       const rawClient = new UpstashRedis({
         url: process.env.UPSTASH_REDIS_REST_URL!,
@@ -310,6 +312,9 @@ function createRedisInstance(): { client: RedisClientInterface; backend: RedisBa
       });
       return { client: new UpstashRedisClientAdapter(rawClient), backend: "upstash" };
     } catch (err) {
+      if (isProduction && !allowMock && !isBuildPhase) {
+        throw new Error(`[Redis] FATAL: Production failed to initialize @upstash/redis: ${(err as Error).message}`);
+      }
       console.warn("[Redis] @upstash/redis initialization failed. Falling back to InMemoryRedisClient.", err);
       return { client: new InMemoryRedisClient(), backend: "memory" };
     }
@@ -318,7 +323,6 @@ function createRedisInstance(): { client: RedisClientInterface; backend: RedisBa
   if (backend === "ioredis") {
     try {
       // Dynamic import to prevent crash when ioredis is optional/missing
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const IORedis = require("ioredis");
       const rawClient = new IORedis(process.env.REDIS_URL!, {
         lazyConnect: true,
@@ -327,9 +331,16 @@ function createRedisInstance(): { client: RedisClientInterface; backend: RedisBa
       });
       return { client: new IORedisClientAdapter(rawClient), backend: "ioredis" };
     } catch (err) {
+      if (isProduction && !allowMock && !isBuildPhase) {
+        throw new Error(`[Redis] FATAL: Production failed to initialize ioredis: ${(err as Error).message}`);
+      }
       console.warn("[Redis] ioredis initialization failed. Falling back to InMemoryRedisClient.", err);
       return { client: new InMemoryRedisClient(), backend: "memory" };
     }
+  }
+
+  if (isProduction && !allowMock && !isBuildPhase) {
+    throw new Error("[Redis] FATAL: Production requires a valid Redis connection (REDIS_URL or Upstash). Refusing to boot with in-memory mock.");
   }
 
   return { client: new InMemoryRedisClient(), backend: "memory" };

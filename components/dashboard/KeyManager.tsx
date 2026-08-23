@@ -213,7 +213,7 @@ export default function KeyManager() {
               </p>
 
               <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3 font-mono text-xs">
-                <div className="text-zinc-400">// 1. Generate & Enroll via CLI (Recommended)</div>
+                <div className="text-zinc-400"># 1. Generate & Enroll via CLI (Recommended)</div>
                 <div className="flex items-center justify-between bg-zinc-900 p-2.5 rounded-lg border border-zinc-800">
                   <span className="text-emerald-400">npx @pixelmesh/agent init</span>
                   <button
@@ -224,7 +224,7 @@ export default function KeyManager() {
                   </button>
                 </div>
 
-                <div className="text-zinc-400 pt-2">// 2. Or Self-Register via Autonomous HTTP API</div>
+                <div className="text-zinc-400 pt-2"># 2. Or Self-Register via Autonomous HTTP API</div>
                 <div className="text-zinc-300">
                   POST <span className="text-amber-400">/api/auth/register</span>
                 </div>

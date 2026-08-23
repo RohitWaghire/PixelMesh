@@ -1,0 +1,227 @@
+import test, { beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import { keyStore } from "./key-store";
+import { generateAgentKeypair, signRequestPayload } from "./agent-crypto";
+import { resetMockDb, prisma } from "../db/prisma";
+import { resetMockRedis } from "../redis/client";
+import { nonceCache } from "./nonce-cache";
+import { isPrivateOrBlockedIp, validateSafeRemoteUrl } from "../image/engine";
+import { checkRateLimit, inMemoryRateLimiter } from "./rate-limiter";
+import { validateProductionEnvironment } from "../../instrumentation";
+import { NextRequest } from "next/server";
+import { POST as registerHandler } from "../../app/api/auth/register/route";
+import { POST as studioProcessHandler } from "../../app/api/studio/process/route";
+
+beforeEach(async () => {
+  resetMockDb();
+  resetMockRedis();
+  inMemoryRateLimiter.reset();
+  await nonceCache.clear();
+});
+
+test("sec-remediation: key re-registration strictly preserves credit balance and prevents infinite credits", async () => {
+  const keypair = generateAgentKeypair("ed25519");
+  
+  // 1. Initial registration grants 100 credits
+  const initial = await keyStore.registerKey({
+    agentName: "Initial Agent",
+    publicKeyPem: keypair.publicKeyPem,
+    initialCredits: 100
+  });
+  assert.equal(initial.creditsBalance, 100);
+
+  // 2. Deduct 90 credits (leaving 10 balance)
+  const deduction = await keyStore.deductCredits(initial.fingerprint, 90, "tx-spend-1");
+  assert.equal(deduction.success, true);
+  assert.equal(deduction.remaining, 10);
+
+  // 3. Attempt re-registration via keyStore.registerKey
+  const reRegistered = await keyStore.registerKey({
+    agentName: "Renamed Agent",
+    publicKeyPem: keypair.publicKeyPem,
+    initialCredits: 100
+  });
+
+  // Balance must remain 10 credits!
+  assert.equal(reRegistered.creditsBalance, 10, "Balance must NOT be reset to 100 on re-registration");
+  assert.equal(reRegistered.agentName, "Renamed Agent", "Mutable metadata can be updated");
+
+  // 4. Verify ledger: exactly ONE FREE_GRANT transaction exists
+  const grants = await prisma.creditTransaction.findMany({
+    where: { agentKeyId: initial.id!, type: "FREE_GRANT" }
+  });
+  assert.equal(grants.length, 1, "Duplicate FREE_GRANT transactions must NOT be created");
+
+  // 5. Test via HTTP endpoint POST /api/auth/register
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const registerSig = signRequestPayload({
+    privateKeyPem: keypair.privateKeyPem,
+    method: "POST",
+    path: "/api/auth/register",
+    timestamp,
+    nonce: "register-proof",
+    body: JSON.stringify({ agent_name: "HTTP Re-register", public_key: keypair.publicKeyPem })
+  });
+
+  const req = new NextRequest("http://localhost:3000/api/auth/register", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      agent_name: "HTTP Re-register",
+      public_key: keypair.publicKeyPem,
+      timestamp,
+      signature: registerSig
+    })
+  });
+
+  const res = await registerHandler(req);
+  assert.equal(res.status, 200, "Existing key registration returns 200 OK");
+  const json = await res.json();
+  assert.equal(json.agent.credits_balance, 10, "HTTP endpoint returns current preserved balance");
+  assert.ok(json.message.includes("already registered"));
+});
+
+test("sec-remediation: deductCredits idempotency via referenceId prevents double charging", async () => {
+  const keypair = generateAgentKeypair("ed25519");
+  const agent = await keyStore.registerKey({
+    agentName: "Idempotent Agent",
+    publicKeyPem: keypair.publicKeyPem,
+    initialCredits: 50
+  });
+
+  // First deduction with referenceId
+  const res1 = await keyStore.deductCredits(agent.fingerprint, 10, "job-idempotent-unique-1");
+  assert.equal(res1.success, true);
+  assert.equal(res1.remaining, 40);
+
+  // Duplicate retry with same referenceId
+  const res2 = await keyStore.deductCredits(agent.fingerprint, 10, "job-idempotent-unique-1");
+  assert.equal(res2.success, true);
+  assert.equal(res2.remaining, 40, "Duplicate deduction with same referenceId must NOT deduct credits again");
+
+  const keyAfter = await keyStore.findKeyByFingerprint(agent.fingerprint);
+  assert.equal(keyAfter?.creditsBalance, 40);
+});
+
+test("sec-remediation: SSRF IP checker accurately identifies private, link-local, and cloud metadata IPs", () => {
+  // Blocked / Private IPs
+  assert.equal(isPrivateOrBlockedIp("169.254.169.254"), true, "AWS/GCP metadata IP must be blocked");
+  assert.equal(isPrivateOrBlockedIp("169.254.1.1"), true, "Link-local must be blocked");
+  assert.equal(isPrivateOrBlockedIp("127.0.0.1"), true, "Loopback must be blocked");
+  assert.equal(isPrivateOrBlockedIp("127.100.200.1"), true, "127.0.0.0/8 subnet must be blocked");
+  assert.equal(isPrivateOrBlockedIp("10.0.0.1"), true, "10.0.0.0/8 private subnet must be blocked");
+  assert.equal(isPrivateOrBlockedIp("172.16.0.1"), true, "172.16.0.0/12 private subnet must be blocked");
+  assert.equal(isPrivateOrBlockedIp("172.31.255.255"), true, "172.16.0.0/12 boundary must be blocked");
+  assert.equal(isPrivateOrBlockedIp("192.168.1.1"), true, "192.168.0.0/16 private subnet must be blocked");
+  assert.equal(isPrivateOrBlockedIp("0.0.0.0"), true, "0.0.0.0 must be blocked");
+  assert.equal(isPrivateOrBlockedIp("::1"), true, "IPv6 loopback must be blocked");
+  assert.equal(isPrivateOrBlockedIp("fc00::1"), true, "IPv6 unique local must be blocked");
+  assert.equal(isPrivateOrBlockedIp("fe80::1"), true, "IPv6 link-local must be blocked");
+  assert.equal(isPrivateOrBlockedIp("::ffff:127.0.0.1"), true, "IPv4-mapped loopback must be blocked");
+
+  // Allowed Public IPs
+  assert.equal(isPrivateOrBlockedIp("8.8.8.8"), false, "Public Google DNS must be allowed");
+  assert.equal(isPrivateOrBlockedIp("1.1.1.1"), false, "Public Cloudflare DNS must be allowed");
+  assert.equal(isPrivateOrBlockedIp("151.101.1.140"), false, "Public CDN IP must be allowed");
+});
+
+test("sec-remediation: validateSafeRemoteUrl rejects SSRF hostnames and protocols", async () => {
+  // Protocol rejection
+  await assert.rejects(
+    async () => validateSafeRemoteUrl("ftp://example.com/photo.jpg"),
+    /Unsupported protocol/
+  );
+  await assert.rejects(
+    async () => validateSafeRemoteUrl("file:///etc/passwd"),
+    /Unsupported protocol/
+  );
+
+  // Hostname string rejection
+  await assert.rejects(
+    async () => validateSafeRemoteUrl("http://localhost/image.png"),
+    /SSRF Violation/
+  );
+  await assert.rejects(
+    async () => validateSafeRemoteUrl("http://169.254.169.254/latest/meta-data/"),
+    /SSRF Violation/
+  );
+  await assert.rejects(
+    async () => validateSafeRemoteUrl("http://service.internal/photo.jpg"),
+    /SSRF Violation/
+  );
+});
+
+test("sec-remediation: rate limiter blocks requests exceeding threshold", async () => {
+  const testIp = "192.0.2.45";
+
+  for (let i = 1; i <= 5; i++) {
+    const res = await checkRateLimit(testIp, 5, 60);
+    assert.equal(res.allowed, true, `Request ${i} should be allowed`);
+    assert.equal(res.remaining, 5 - i);
+  }
+
+  // 6th request must be blocked
+  const blocked = await checkRateLimit(testIp, 5, 60);
+  assert.equal(blocked.allowed, false, "Request exceeding limit must be blocked");
+  assert.equal(blocked.remaining, 0);
+});
+
+test("sec-remediation: POST /api/studio/process rejects payloads exceeding 10MB with 413", async () => {
+  // Create an oversized base64 string (>14MB)
+  const oversizedBase64 = "A".repeat(15 * 1024 * 1024);
+
+  const req = new NextRequest("http://localhost:3000/api/studio/process", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      tool: "crop_image",
+      image_base64: oversizedBase64
+    })
+  });
+
+  const res = await studioProcessHandler(req);
+  assert.equal(res.status, 413, "Oversized payload must return 413 Payload Too Large");
+  const json = await res.json();
+  assert.ok(json.error.includes("Payload Too Large"));
+});
+
+test("sec-remediation: POST /api/studio/process enforces pipeline operations limit (max 5)", async () => {
+  const operations = Array(6).fill({ tool: "grayscale_image", params: {} });
+
+  const req = new NextRequest("http://localhost:3000/api/studio/process", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      operations,
+      image_base64: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    })
+  });
+
+  const res = await studioProcessHandler(req);
+  assert.equal(res.status, 400, "Pipeline with >5 operations must be rejected");
+  const json = await res.json();
+  assert.ok(json.error.includes("Maximum 5 operations"));
+});
+
+test("sec-remediation: production environment validation detects missing configurations", () => {
+  const origEnv = { ...process.env };
+  try {
+    process.env.NODE_ENV = "production";
+    delete process.env.ALLOW_MOCK_IN_PRODUCTION;
+    delete process.env.NEXT_PHASE;
+    delete process.env.BUILD_PHASE;
+    delete process.env.DATABASE_URL;
+    delete process.env.REDIS_URL;
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.S3_BUCKET;
+    delete process.env.LOCAL_STORAGE_DIR;
+
+    const result = validateProductionEnvironment(false);
+    assert.equal(result.valid, false);
+    assert.ok(result.missing.some((m) => m.includes("DATABASE_URL")));
+    assert.ok(result.missing.some((m) => m.includes("Redis")));
+    assert.ok(result.missing.some((m) => m.includes("Persistent Storage")));
+  } finally {
+    process.env = origEnv;
+  }
+});

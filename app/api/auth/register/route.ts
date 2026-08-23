@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { keyStore } from "@/lib/auth/key-store";
-import { verifyRequestSignature } from "@/lib/auth/agent-crypto";
+import { verifyRequestSignature, computeKeyFingerprint } from "@/lib/auth/agent-crypto";
 
 export async function POST(req: NextRequest) {
   try {
@@ -36,6 +36,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid proof-of-ownership signature" }, { status: 401 });
     }
 
+    const fingerprint = computeKeyFingerprint(public_key);
+    const existingKey = await keyStore.findKeyByFingerprint(fingerprint);
+
     const registered = await keyStore.registerKey({
       agentName: agent_name || "Autonomous AI Agent",
       publicKeyPem: public_key,
@@ -43,9 +46,13 @@ export async function POST(req: NextRequest) {
       initialCredits: 100
     });
 
+    const isNew = !existingKey;
+
     return NextResponse.json({
       success: true,
-      message: "Agent public key successfully enrolled. 100 free credits granted.",
+      message: isNew 
+        ? "Agent public key successfully enrolled. 100 free credits granted."
+        : "Agent public key is already registered.",
       agent: {
         fingerprint: registered.fingerprint,
         agent_name: registered.agentName,
@@ -54,7 +61,7 @@ export async function POST(req: NextRequest) {
         status: registered.status
       },
       mcp_endpoint: "/api/mcp"
-    }, { status: 201 });
+    }, { status: isNew ? 201 : 200 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || "Failed to register agent" }, { status: 500 });
   }

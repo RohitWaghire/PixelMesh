@@ -403,6 +403,34 @@ export async function POST(req: NextRequest) {
 
       // Deduct Credits ONLY after successful execution
       const deduction = await keyStore.deductCredits(fingerprint, cost, undefined, toolName);
+      if (!deduction.success) {
+        await telemetryStore.addLog({
+          agentKeyId: agentKey.id,
+          timestamp: new Date().toISOString(),
+          method: "tools/call",
+          toolName,
+          fingerprint,
+          agentName: agentKey.agentName,
+          signatureValid: true,
+          timestampDriftMs: driftMs,
+          nonce,
+          costCredits: 0,
+          creditsRemaining: deduction.remaining,
+          latencyMs: Math.round(performance.now() - startTime),
+          status: "rate_limited",
+          errorMessage: deduction.error || "Insufficient credits during settlement."
+        });
+
+        return NextResponse.json({
+          jsonrpc,
+          id,
+          error: {
+            code: -32002,
+            message: `Insufficient Credits: ${deduction.error || "Unable to settle credits. Please top up your balance."}`
+          }
+        }, { status: 402 });
+      }
+
       const latency = Math.round(performance.now() - startTime);
 
       await telemetryStore.addLog({
@@ -425,7 +453,7 @@ export async function POST(req: NextRequest) {
         content: [
           {
             type: "text",
-            text: `Tool '${toolName}' executed successfully in ${filterResult.executionTimeM}ms. Metadata: ${JSON.stringify(filterResult.metadata)}`
+            text: `Tool '${toolName}' executed successfully in ${filterResult.executionTimeMs}ms. Metadata: ${JSON.stringify(filterResult.metadata)}`
           }
         ],
         metadata: filterResult.metadata,

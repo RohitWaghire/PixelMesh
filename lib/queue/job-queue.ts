@@ -201,7 +201,9 @@ export class InMemoryJobQueue extends EventEmitter implements JobQueueInterface 
       .sort((a, b) => a.priority - b.priority || a.createdAt.getTime() - b.createdAt.getTime());
 
     if (queuedJobs.length === 0) return null;
-    return { ...queuedJobs[0] };
+    const selected = queuedJobs[0];
+    selected.status = "active";
+    return { ...selected };
   }
 
   /**
@@ -461,9 +463,7 @@ export class BullMQJobQueueAdapter extends EventEmitter implements JobQueueInter
 
   private initBullMQ(): void {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { Queue, QueueEvents } = require("bullmq");
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const IORedis = require("ioredis");
 
       this.redisConnection = new IORedis(this.redisUrl, {
@@ -750,14 +750,24 @@ declare global {
 
 export function createJobQueue(name = "pixelmesh-jobs", config?: QueueConfig): JobQueue {
   const backend = config?.backend || (determineRedisBackend() === "ioredis" && process.env.REDIS_URL ? "bullmq" : "memory");
+  const isProduction = process.env.NODE_ENV === "production";
+  const allowMock = process.env.ALLOW_MOCK_IN_PRODUCTION === "true";
+  const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build" || process.env.BUILD_PHASE === "true";
 
   if (backend === "bullmq" && process.env.REDIS_URL && !process.env.REDIS_URL.startsWith("memory:") && !process.env.REDIS_URL.startsWith("mock:")) {
     try {
       return new BullMQJobQueueAdapter(name, process.env.REDIS_URL);
     } catch (err) {
+      if (isProduction && !allowMock && !isBuildPhase) {
+        throw new Error(`[JobQueue] FATAL: Production failed to initialize BullMQ Redis queue: ${(err as Error).message}`);
+      }
       console.warn("[JobQueue] BullMQ initialization failed. Falling back to InMemoryJobQueue.", err);
       return new InMemoryJobQueue(name, { concurrency: config?.concurrency });
     }
+  }
+
+  if (isProduction && !allowMock && !isBuildPhase) {
+    throw new Error("[JobQueue] FATAL: Production requires BullMQ + Redis connection. Refusing to boot with in-memory queue.");
   }
 
   return new InMemoryJobQueue(name, { concurrency: config?.concurrency });

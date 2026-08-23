@@ -56,10 +56,18 @@ export function resolveStorageDriver(explicitDriver?: StorageDriver): StorageDri
  */
 export function createStorageAdapter(config?: StorageConfig): StorageAdapter {
   const driver = resolveStorageDriver(config?.driver);
+  const isProduction = process.env.NODE_ENV === "production";
+  const allowMock = process.env.ALLOW_MOCK_IN_PRODUCTION === "true";
+  const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build" || process.env.BUILD_PHASE === "true";
+
+  if (driver === "memory") {
+    if (isProduction && !allowMock && !isBuildPhase) {
+      throw new Error("[Storage] FATAL: Production requires a persistent storage backend (S3/R2 or LOCAL_STORAGE_DIR). Refusing to boot with in-memory adapter.");
+    }
+    return new InMemoryStorageAdapter(config);
+  }
 
   switch (driver) {
-    case "memory":
-      return new InMemoryStorageAdapter(config);
     case "local":
       return new LocalStorageAdapter(config);
     case "s3":

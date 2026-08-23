@@ -113,7 +113,6 @@ export class QueueWorker extends EventEmitter {
   private async initBullMQWorker(): Promise<void> {
     try {
       // Dynamic import to prevent crash when BullMQ is not installed in mock mode
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { Worker } = require("bullmq");
       const ioredis = await this.queue.getRedisConnection();
 
@@ -485,10 +484,11 @@ export class QueueWorker extends EventEmitter {
     // 5. ATOMIC CREDIT SETTLEMENT: Deduct credits ONLY after successful execution!
     let deductionRemaining = agentKey.creditsBalance;
     if (cost > 0) {
+      const uniqueJobRef = jobId || (payload as any).jobId || `job:${crypto.randomUUID()}`;
       const deduction = await keyStore.deductCredits(
         fingerprint,
         cost,
-        jobId || `job:${Date.now()}`,
+        uniqueJobRef,
         toolName
       );
 

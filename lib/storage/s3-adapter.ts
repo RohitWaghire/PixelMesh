@@ -80,7 +80,6 @@ export class S3StorageAdapter implements StorageAdapter {
 
     try {
       // Dynamic import to prevent crash when @aws-sdk/client-s3 is not installed
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { S3Client } = require("@aws-sdk/client-s3");
       this.customClient = new S3Client({
         region: this.region,

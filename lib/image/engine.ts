@@ -9,7 +9,217 @@ import * as exposure from "./filters/exposure";
 import * as color from "./filters/color";
 import * as effects from "./filters/effects";
 
+import dns from "dns";
+
 const MAX_IMAGE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB High-Res limit
+
+/**
+ * Validates whether an IP address is a private, link-local, or loopback address (SSRF defense)
+ */
+export function isPrivateOrBlockedIp(ip: string): boolean {
+  if (!ip) return true;
+
+  // IPv6 mapped IPv4
+  if (ip.startsWith("::ffff:")) {
+    ip = ip.substring(7);
+  }
+
+  // IPv6 checks
+  if (ip.includes(":")) {
+    const lower = ip.toLowerCase();
+    if (lower === "::1" || lower === "::") return true;
+    if (lower.startsWith("fe80:") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return true; // Link-local fe80::/10
+    if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // Unique local fc00::/7
+    return false;
+  }
+
+  // IPv4 checks
+  const parts = ip.split(".").map((p) => parseInt(p, 10));
+  if (parts.length !== 4 || parts.some((p) => isNaN(p) || p < 0 || p > 255)) {
+    return true; // Malformed IP
+  }
+
+  const [a, b] = parts;
+
+  // 0.0.0.0/8 (Current network)
+  if (a === 0) return true;
+
+  // 127.0.0.0/8 (Loopback)
+  if (a === 127) return true;
+
+  // 10.0.0.0/8 (Private)
+  if (a === 10) return true;
+
+  // 172.16.0.0/12 (Private 172.16.0.0 - 172.31.255.255)
+  if (a === 172 && b >= 16 && b <= 31) return true;
+
+  // 192.168.0.0/16 (Private)
+  if (a === 192 && b === 168) return true;
+
+  // 169.254.0.0/16 (Link-local & AWS/GCP/Azure Cloud Metadata)
+  if (a === 169 && b === 254) return true;
+
+  // 100.64.0.0/10 (Carrier-grade NAT)
+  if (a === 100 && b >= 64 && b <= 127) return true;
+
+  // 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 (Documentation / Test)
+  if (a === 192 && b === 0 && parts[2] === 2) return true;
+  if (a === 198 && b === 51 && parts[2] === 100) return true;
+  if (a === 203 && b === 0 && parts[2] === 113) return true;
+
+  // 224.0.0.0/4 (Multicast) & 240.0.0.0/4 (Reserved)
+  if (a >= 224) return true;
+
+  return false;
+}
+
+/**
+ * Validates that a remote URL is safe from SSRF attacks by resolving DNS and blocking private subnets
+ */
+export async function validateSafeRemoteUrl(urlString: string): Promise<URL> {
+  let parsed: URL;
+  try {
+    parsed = new URL(urlString);
+  } catch {
+    throw new Error(`Invalid URL format: ${urlString}`);
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Unsupported protocol '${parsed.protocol}'. Only http: and https: are allowed.`);
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+
+  // Hostname string checks
+  if (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname.endsWith(".local") ||
+    hostname.endsWith(".internal") ||
+    hostname === "169.254.169.254" ||
+    hostname === "metadata.google.internal"
+  ) {
+    throw new Error(`SSRF Violation: Hostname '${hostname}' is a restricted private or metadata host.`);
+  }
+
+  // Preflight DNS resolution to check resolved IP addresses against private subnets
+  try {
+    const records = await dns.promises.lookup(hostname, { all: true });
+    if (!records || records.length === 0) {
+      throw new Error(`DNS resolution failed for hostname '${hostname}'`);
+    }
+
+    for (const record of records) {
+      if (isPrivateOrBlockedIp(record.address)) {
+        throw new Error(
+          `SSRF Violation: Hostname '${hostname}' resolved to blocked private/internal IP '${record.address}'.`
+        );
+      }
+    }
+  } catch (err: any) {
+    if (err.message?.includes("SSRF Violation")) {
+      throw err;
+    }
+    // If DNS resolution fails, reject the URL
+    throw new Error(`Failed to resolve host '${hostname}': ${err.message}`);
+  }
+
+  return parsed;
+}
+
+/**
+ * Safely fetches a remote image with SSRF checks, redirect bounds, 10s timeout, and chunk-by-chunk stream capping
+ */
+export async function fetchSafeRemoteImage(
+  urlString: string,
+  maxSizeBytes: number = MAX_IMAGE_SIZE_BYTES
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  let currentUrl = urlString;
+  let redirectCount = 0;
+  const MAX_REDIRECTS = 3;
+
+  while (true) {
+    await validateSafeRemoteUrl(currentUrl);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    let res: Response;
+    try {
+      res = await fetch(currentUrl, {
+        signal: controller.signal,
+        redirect: "manual"
+      });
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (err.name === "AbortError") {
+        throw new Error(`Remote image fetch timed out after 10 seconds (${currentUrl})`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    // Handle Redirects with per-hop SSRF validation
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) {
+        throw new Error(`Redirect response (${res.status}) missing Location header from ${currentUrl}`);
+      }
+
+      redirectCount++;
+      if (redirectCount > MAX_REDIRECTS) {
+        throw new Error(`Too many redirects (exceeded maximum of ${MAX_REDIRECTS} redirects)`);
+      }
+
+      currentUrl = new URL(location, currentUrl).toString();
+      continue;
+    }
+
+    if (!res.ok) {
+      throw new Error(`Failed to fetch image from URL: ${currentUrl} (${res.status} ${res.statusText})`);
+    }
+
+    // Check content-length header if provided
+    const contentLength = res.headers.get("content-length");
+    if (contentLength && parseInt(contentLength, 10) > maxSizeBytes) {
+      throw new Error(
+        `Remote image size (${(parseInt(contentLength, 10) / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed ${(maxSizeBytes / (1024 * 1024)).toFixed(0)}MB limit.`
+      );
+    }
+
+    // Stream response chunks with live byte counter to prevent memory exhaustion
+    if (!res.body) {
+      throw new Error(`Remote image response from ${currentUrl} has no body.`);
+    }
+
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let receivedBytes = 0;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        receivedBytes += value.length;
+        if (receivedBytes > maxSizeBytes) {
+          try { await reader.cancel(); } catch {}
+          throw new Error(
+            `Remote image size (${(receivedBytes / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed ${(maxSizeBytes / (1024 * 1024)).toFixed(0)}MB limit.`
+          );
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    const buffer = Buffer.concat(chunks);
+    const mimeType = res.headers.get("content-type") || "image/png";
+    return { buffer, mimeType };
+  }
+}
 
 /**
  * Parses inline base64 string or data URI into Buffer and mimeType
@@ -73,16 +283,7 @@ export async function resolveInputImage(
     }
 
     if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-      const res = await fetch(trimmed);
-      if (!res.ok) {
-        throw new Error(`Failed to fetch image from URL: ${trimmed} (${res.status} ${res.statusText})`);
-      }
-      const arrayBuf = await res.arrayBuffer();
-      const buffer = Buffer.from(arrayBuf);
-      if (buffer.length > MAX_IMAGE_SIZE_BYTES) {
-        throw new Error(`Remote image size (${(buffer.length / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed 50MB limit.`);
-      }
-      const mimeType = res.headers.get("content-type") || "image/png";
+      const { buffer, mimeType } = await fetchSafeRemoteImage(trimmed);
       return { buffer, mimeType, sourceType: "url", sourceUrl: trimmed };
     }
 
@@ -107,16 +308,7 @@ export async function resolveInputImage(
   }
 
   if (imageUrl) {
-    const res = await fetch(imageUrl);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch image from URL: ${imageUrl} (${res.status} ${res.statusText})`);
-    }
-    const arrayBuf = await res.arrayBuffer();
-    const buffer = Buffer.from(arrayBuf);
-    if (buffer.length > MAX_IMAGE_SIZE_BYTES) {
-      throw new Error(`Remote image size (${(buffer.length / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed 50MB limit.`);
-    }
-    const mimeType = res.headers.get("content-type") || "image/png";
+    const { buffer, mimeType } = await fetchSafeRemoteImage(imageUrl);
     return { buffer, mimeType, sourceType: "url", sourceUrl: imageUrl };
   }
 

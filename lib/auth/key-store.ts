@@ -332,10 +332,10 @@ export class KeyStore {
           if (existing.status === "revoked") {
             throw new Error("This agent key fingerprint has been revoked.");
           }
-          if (params.initialCredits !== undefined && params.initialCredits !== existing.creditsBalance) {
+          if (params.agentName && params.agentName !== existing.agentName) {
             const updated = await tx.agentKey.update({
               where: { id: existing.id },
-              data: { creditsBalance: params.initialCredits }
+              data: { agentName: params.agentName }
             });
             return toAuthorizedAgentKey(updated);
           }
@@ -386,7 +386,7 @@ export class KeyStore {
   }
 
   /**
-   * Atomic transactional credit deduction with race condition prevention
+   * Atomic transactional credit deduction with race condition prevention & idempotency
    */
   public deductCredits(
     fingerprint: string,
@@ -417,25 +417,51 @@ export class KeyStore {
           return { success: false, remaining: 0, error: "Agent key has been revoked" };
         }
 
-        if (key.creditsBalance < amount) {
-          return {
-            success: false,
-            remaining: key.creditsBalance,
-            error: `Insufficient credits. Required: ${amount}, Available: ${key.creditsBalance}`
-          };
+        if (amount === 0) {
+          return { success: true, remaining: key.creditsBalance };
         }
 
-        const newBalance = key.creditsBalance - amount;
+        // Idempotency check: if explicit referenceId was already processed, return existing balance
+        if (referenceId) {
+          const existingTx = await tx.creditTransaction.findFirst({
+            where: { referenceId, agentKeyId: key.id }
+          });
+          if (existingTx) {
+            return {
+              success: true,
+              remaining: existingTx.balanceAfter
+            };
+          }
+        }
+
         const now = new Date();
 
-        await tx.agentKey.update({
-          where: { id: key.id },
+        // Atomic conditional decrement: prevents race condition overdraw in Read Committed PostgreSQL
+        const updateResult = await tx.agentKey.updateMany({
+          where: {
+            id: key.id,
+            status: "active",
+            creditsBalance: { gte: amount }
+          },
           data: {
             creditsBalance: { decrement: amount },
             totalInvocations: { increment: 1 },
             lastUsedAt: now
           }
         });
+
+        const refreshedKey = await tx.agentKey.findUnique({ where: { id: key.id } });
+
+        if (updateResult.count === 0) {
+          const currentBal = refreshedKey?.creditsBalance ?? 0;
+          return {
+            success: false,
+            remaining: currentBal,
+            error: `Insufficient credits. Required: ${amount}, Available: ${currentBal}`
+          };
+        }
+
+        const newBalance = refreshedKey?.creditsBalance ?? (key.creditsBalance - amount);
 
         await tx.creditTransaction.create({
           data: {

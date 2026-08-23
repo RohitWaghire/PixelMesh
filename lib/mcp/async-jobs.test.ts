@@ -149,8 +149,31 @@ test("m3: GET /api/mcp/jobs/:id poll endpoint lifecycle (queued -> completed)", 
     }
   );
 
-  // 1. Check queued status via GET
-  const req1 = new NextRequest(`http://localhost:3000/api/mcp/jobs/${job.id}`, { method: "GET" });
+  function createSignedJobRequest(path: string, keypair: any, fingerprint: string): NextRequest {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const nonce = "job-req-" + Math.random().toString(36).substring(2, 9);
+    const signature = signRequestPayload({
+      privateKeyPem: keypair.privateKeyPem,
+      method: "GET",
+      path,
+      timestamp,
+      nonce,
+      body: ""
+    });
+
+    return new NextRequest(`http://localhost:3000${path}`, {
+      method: "GET",
+      headers: {
+        "x-agent-key-fingerprint": fingerprint,
+        "x-agent-timestamp": timestamp,
+        "x-agent-nonce": nonce,
+        "x-agent-signature": signature
+      }
+    });
+  }
+
+  // 1. Check queued status via GET (Signed)
+  const req1 = createSignedJobRequest(`/api/mcp/jobs/${job.id}`, keypair, agent.fingerprint);
   const res1 = await jobGetHandler(req1, { params: Promise.resolve({ id: job.id }) });
   assert.equal(res1.status, 200);
   const json1 = await res1.json();
@@ -161,8 +184,8 @@ test("m3: GET /api/mcp/jobs/:id poll endpoint lifecycle (queued -> completed)", 
   const worker = new QueueWorker(jobQueue, { concurrency: 1, autoStart: false });
   await worker.processNextJob();
 
-  // 3. Check completed status via GET
-  const req2 = new NextRequest(`http://localhost:3000/api/mcp/jobs/${job.id}`, { method: "GET" });
+  // 3. Check completed status via GET (Signed)
+  const req2 = createSignedJobRequest(`/api/mcp/jobs/${job.id}`, keypair, agent.fingerprint);
   const res2 = await jobGetHandler(req2, { params: Promise.resolve({ id: job.id }) });
   assert.equal(res2.status, 200);
   const json2 = await res2.json();
@@ -198,7 +221,30 @@ test("m3: GET /api/mcp/jobs/:id/stream emits SSE progress and completed events",
     }
   );
 
-  const req = new NextRequest(`http://localhost:3000/api/mcp/jobs/${job.id}/stream`, { method: "GET" });
+  function createSignedJobStreamRequest(path: string, kp: any, fp: string): NextRequest {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const nonce = "stream-req-" + Math.random().toString(36).substring(2, 9);
+    const signature = signRequestPayload({
+      privateKeyPem: kp.privateKeyPem,
+      method: "GET",
+      path,
+      timestamp,
+      nonce,
+      body: ""
+    });
+
+    return new NextRequest(`http://localhost:3000${path}`, {
+      method: "GET",
+      headers: {
+        "x-agent-key-fingerprint": fp,
+        "x-agent-timestamp": timestamp,
+        "x-agent-nonce": nonce,
+        "x-agent-signature": signature
+      }
+    });
+  }
+
+  const req = createSignedJobStreamRequest(`/api/mcp/jobs/${job.id}/stream`, keypair, agent.fingerprint);
   const res = await jobStreamHandler(req, { params: Promise.resolve({ id: job.id }) });
 
   assert.equal(res.status, 200);
@@ -208,8 +254,9 @@ test("m3: GET /api/mcp/jobs/:id/stream emits SSE progress and completed events",
   const worker = new QueueWorker(jobQueue, { concurrency: 1, autoStart: false });
   await worker.processNextJob();
 
-  // Stream completed job
-  const resCompleted = await jobStreamHandler(req, { params: Promise.resolve({ id: job.id }) });
+  // Stream completed job (Signed)
+  const reqCompleted = createSignedJobStreamRequest(`/api/mcp/jobs/${job.id}/stream`, keypair, agent.fingerprint);
+  const resCompleted = await jobStreamHandler(reqCompleted, { params: Promise.resolve({ id: job.id }) });
   const reader = resCompleted.body?.getReader();
   assert.ok(reader, "Reader must be available");
 
@@ -223,6 +270,103 @@ test("m3: GET /api/mcp/jobs/:id/stream emits SSE progress and completed events",
 
   assert.ok(receivedText.includes("event: progress"), "Must emit progress event");
   assert.ok(receivedText.includes("event: completed"), "Must emit completed event");
+});
+
+test("m3: GET /api/mcp/jobs/:id strictly rejects unauthenticated requests with 401", async () => {
+  const req = new NextRequest("http://localhost:3000/api/mcp/jobs/job_test_123", { method: "GET" });
+  const res = await jobGetHandler(req, { params: Promise.resolve({ id: "job_test_123" }) });
+  assert.equal(res.status, 401, "Unauthenticated poll must be rejected with 401");
+});
+
+test("m3: GET /api/mcp/jobs/:id/stream strictly rejects unauthenticated requests with 401", async () => {
+  const req = new NextRequest("http://localhost:3000/api/mcp/jobs/job_test_123/stream", { method: "GET" });
+  const res = await jobStreamHandler(req, { params: Promise.resolve({ id: "job_test_123" }) });
+  assert.equal(res.status, 401, "Unauthenticated stream must be rejected with 401");
+});
+
+test("m3: GET /api/mcp/jobs/:id enforces IDOR authorization (403 for unauthorized caller)", async () => {
+  // Agent A creates job
+  const keypairA = generateAgentKeypair("ed25519");
+  const agentA = await keyStore.registerKey({
+    agentName: "Agent A",
+    publicKeyPem: keypairA.publicKeyPem,
+    initialCredits: 20
+  });
+
+  const testImage = await createTestImage();
+  const job = await jobQueue.addJob({
+    fingerprint: agentA.fingerprint,
+    agentName: agentA.agentName,
+    toolName: "invert_colors",
+    toolArgs: { image_base64: testImage },
+    cost: 1
+  });
+
+  // Agent B attempts to read Agent A's job
+  const keypairB = generateAgentKeypair("ed25519");
+  const agentB = await keyStore.registerKey({
+    agentName: "Agent B (Attacker)",
+    publicKeyPem: keypairB.publicKeyPem,
+    initialCredits: 20
+  });
+
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const nonce = "idor-nonce-" + Math.random().toString(36).substring(2, 9);
+  const signatureB = signRequestPayload({
+    privateKeyPem: keypairB.privateKeyPem,
+    method: "GET",
+    path: `/api/mcp/jobs/${job.id}`,
+    timestamp,
+    nonce,
+    body: ""
+  });
+
+  const reqB = new NextRequest(`http://localhost:3000/api/mcp/jobs/${job.id}`, {
+    method: "GET",
+    headers: {
+      "x-agent-key-fingerprint": agentB.fingerprint,
+      "x-agent-timestamp": timestamp,
+      "x-agent-nonce": nonce,
+      "x-agent-signature": signatureB
+    }
+  });
+
+  const resB = await jobGetHandler(reqB, { params: Promise.resolve({ id: job.id }) });
+  assert.equal(resB.status, 403, "Cross-agent IDOR attempt must return 403 Forbidden");
+
+  // Admin key is permitted to read Agent A's job
+  const devKeyInfo = keyStore.getDevKeypair();
+  assert.ok(devKeyInfo);
+  const adminKeypair = devKeyInfo.keypair;
+  const adminAgent = await keyStore.registerKey({
+    agentName: "Admin Inspector",
+    publicKeyPem: adminKeypair.publicKeyPem,
+    scopes: ["admin", "all-tools"]
+  });
+
+  const adminTimestamp = Math.floor(Date.now() / 1000).toString();
+  const adminNonce = "admin-nonce-" + Math.random().toString(36).substring(2, 9);
+  const adminSig = signRequestPayload({
+    privateKeyPem: adminKeypair.privateKeyPem,
+    method: "GET",
+    path: `/api/mcp/jobs/${job.id}`,
+    timestamp: adminTimestamp,
+    nonce: adminNonce,
+    body: ""
+  });
+
+  const adminReq = new NextRequest(`http://localhost:3000/api/mcp/jobs/${job.id}`, {
+    method: "GET",
+    headers: {
+      "x-agent-key-fingerprint": adminAgent.fingerprint,
+      "x-agent-timestamp": adminTimestamp,
+      "x-agent-nonce": adminNonce,
+      "x-agent-signature": adminSig
+    }
+  });
+
+  const adminRes = await jobGetHandler(adminReq, { params: Promise.resolve({ id: job.id }) });
+  assert.equal(adminRes.status, 200, "Admin-scoped key must be allowed to inspect job");
 });
 
 test("m3: POST /api/mcp with Prefer: respond-async routes to jobQueue with 202", async () => {

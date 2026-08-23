@@ -29,7 +29,7 @@ async function createTestImage(width = 80, height = 80): Promise<string> {
   return "data:image/png;base64," + buf.toString("base64");
 }
 
-test("m3: POST /api/mcp/jobs successfully submits async job with 0 upfront credit deduction", async () => {
+test("m3: POST /api/mcp/jobs successfully submits async job with atomic upfront credit reservation", async () => {
   const keypair = generateAgentKeypair("ed25519");
   const agent = await keyStore.registerKey({
     agentName: "Async Submitter Agent",
@@ -80,9 +80,9 @@ test("m3: POST /api/mcp/jobs successfully submits async job with 0 upfront credi
   assert.equal(json.poll_url, `/api/mcp/jobs/${json.job_id}`);
   assert.equal(json.stream_url, `/api/mcp/jobs/${json.job_id}/stream`);
 
-  // Verify Invariant: Zero credits deducted upon job submission
+  // Verify Invariant: Exactly 1 credit reserved atomically upon job submission
   const keyAfter = await keyStore.findKeyByFingerprint(agent.fingerprint);
-  assert.equal(keyAfter?.creditsBalance, 50, "Credits must NOT be deducted at submission");
+  assert.equal(keyAfter?.creditsBalance, 49, "1 credit must be reserved upfront at submission");
 });
 
 test("m3: POST /api/mcp/jobs preflight rejects insufficient credits with 402", async () => {
@@ -420,9 +420,9 @@ test("m3: POST /api/mcp with Prefer: respond-async routes to jobQueue with 202",
   assert.ok(json.job_id);
   assert.equal(json.poll_url, `/api/mcp/jobs/${json.job_id}`);
 
-  // Invariant: Credits remain untouched
+  // Invariant: Exactly 1 credit reserved upfront at submission
   const keyAfter = await keyStore.findKeyByFingerprint(agent.fingerprint);
-  assert.equal(keyAfter?.creditsBalance, 40);
+  assert.equal(keyAfter?.creditsBalance, 39, "1 credit must be reserved upfront at submission");
 });
 
 test("m3: direct storage transport (image_key input and storage return_type)", async () => {

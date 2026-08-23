@@ -5,12 +5,13 @@ import { generateAgentKeypair, signRequestPayload } from "./agent-crypto";
 import { resetMockDb, prisma } from "../db/prisma";
 import { resetMockRedis } from "../redis/client";
 import { nonceCache } from "./nonce-cache";
-import { isPrivateOrBlockedIp, validateSafeRemoteUrl } from "../image/engine";
+import { isPrivateOrBlockedIp, validateSafeRemoteUrl, fetchSafeRemoteImage } from "../image/engine";
 import { checkRateLimit, inMemoryRateLimiter } from "./rate-limiter";
 import { validateProductionEnvironment } from "../../instrumentation";
 import { NextRequest } from "next/server";
 import { POST as registerHandler } from "../../app/api/auth/register/route";
 import { POST as studioProcessHandler } from "../../app/api/studio/process/route";
+import { POST as jobsPostHandler } from "../../app/api/mcp/jobs/route";
 
 beforeEach(async () => {
   resetMockDb();
@@ -224,4 +225,101 @@ test("sec-remediation: production environment validation detects missing configu
   } finally {
     process.env = origEnv;
   }
+});
+
+test("sec-remediation: concurrent async job submissions reserve credits and strictly prevent unbillable compute", async () => {
+  const keypair = generateAgentKeypair("ed25519");
+  const agent = await keyStore.registerKey({
+    agentName: "Tight Budget Agent",
+    publicKeyPem: keypair.publicKeyPem,
+    initialCredits: 3 // Only 3 credits available!
+  });
+
+  const payloadBody = JSON.stringify({
+    tool: "grayscale_image",
+    arguments: {
+      image_base64: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    }
+  });
+
+  // Launch 10 simultaneous async job requests (each costs 1 credit)
+  const results = await Promise.all(
+    Array.from({ length: 10 }).map(async (_, idx) => {
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const nonce = `concurrent-nonce-${idx}-${Math.random().toString(36).substring(2, 9)}`;
+      const signature = signRequestPayload({
+        privateKeyPem: keypair.privateKeyPem,
+        method: "POST",
+        path: "/api/mcp/jobs",
+        timestamp,
+        nonce,
+        body: payloadBody
+      });
+
+      const req = new NextRequest("http://localhost:3000/api/mcp/jobs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-agent-key-fingerprint": agent.fingerprint,
+          "x-agent-timestamp": timestamp,
+          "x-agent-nonce": nonce,
+          "x-agent-signature": signature
+        },
+        body: payloadBody
+      });
+
+      return await jobsPostHandler(req);
+    })
+  );
+
+  const acceptedCount = results.filter((r) => r.status === 202).length;
+  const rejectedCount = results.filter((r) => r.status === 402).length;
+
+  assert.equal(acceptedCount, 3, "Exactly 3 requests must be admitted (matching available credits)");
+  assert.equal(rejectedCount, 7, "Remaining 7 requests must be rejected with 402 Insufficient Credits");
+
+  const keyAfter = await keyStore.findKeyByFingerprint(agent.fingerprint);
+  assert.equal(keyAfter?.creditsBalance, 0, "Credit balance must be exactly 0 after 3 reservations");
+});
+
+test("sec-remediation: KeyStore refundCredits restores balance and logs REFUND ledger entry", async () => {
+  const keypair = generateAgentKeypair("ed25519");
+  const agent = await keyStore.registerKey({
+    agentName: "Refunder Agent",
+    publicKeyPem: keypair.publicKeyPem,
+    initialCredits: 10
+  });
+
+  // Deduct 5 credits
+  const deductRes = await keyStore.deductCredits(agent.fingerprint, 5, "job-fail-123", "crop_image");
+  assert.equal(deductRes.success, true);
+  assert.equal(deductRes.remaining, 5);
+
+  // Refund 5 credits on worker failure
+  const refunded = await keyStore.refundCredits(agent.fingerprint, 5, "refund-job-fail-123", "Worker crashed");
+  assert.equal(refunded.creditsBalance, 10);
+
+  const txs = await prisma.creditTransaction.findMany({
+    where: { agentKeyId: agent.id }
+  });
+  const refundTx = txs.find((t) => t.type === "REFUND");
+  assert.ok(refundTx, "Must record a REFUND credit transaction in ledger");
+  assert.equal(refundTx.amount, 5);
+  assert.equal(refundTx.balanceAfter, 10);
+});
+
+test("sec-remediation: fetchSafeRemoteImage socket DNS pinning rejects private IPs", async () => {
+  await assert.rejects(
+    async () => {
+      await fetchSafeRemoteImage("http://169.254.169.254/latest/meta-data/");
+    },
+    /SSRF Violation/
+  );
+
+  await assert.rejects(
+    async () => {
+      await fetchSafeRemoteImage("http://127.0.0.1:8080/internal-status");
+    },
+    /SSRF Violation/
+  );
 });

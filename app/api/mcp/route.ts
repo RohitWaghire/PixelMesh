@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "crypto";
 import { keyStore } from "@/lib/auth/key-store";
 import { verifyRequestSignature } from "@/lib/auth/agent-crypto";
 import { nonceCache } from "@/lib/auth/nonce-cache";
@@ -260,14 +261,56 @@ export async function POST(req: NextRequest) {
     if (isAsyncPreferred) {
       const requestedPriority = toolArgs.priority || inferJobPriority(toolName, toolArgs);
       const returnType = toolArgs.return_type || toolArgs.returnType || "base64";
+      const asyncJobId = `job_${Date.now().toString(36)}_${crypto.randomBytes(6).toString("hex")}`;
+      let asyncCreditsRemaining = agentKey.creditsBalance;
 
+      if (cost > 0) {
+        const deduction = await keyStore.deductCredits(
+          fingerprint,
+          cost,
+          asyncJobId,
+          toolName
+        );
+
+        if (!deduction.success) {
+          await telemetryStore.addLog({
+            agentKeyId: agentKey.id,
+            timestamp: new Date().toISOString(),
+            method: "tools/call",
+            toolName,
+            fingerprint,
+            agentName: agentKey.agentName,
+            signatureValid: true,
+            timestampDriftMs: driftMs,
+            nonce,
+            costCredits: 0,
+            creditsRemaining: deduction.remaining,
+            latencyMs: Math.round(performance.now() - startTime),
+            status: "rate_limited",
+            errorMessage: deduction.error || `Insufficient credits (requires ${cost})`
+          });
+
+          return NextResponse.json({
+            jsonrpc,
+            id,
+            error: {
+              code: -32002,
+              message: `Insufficient Credits. Required: ${cost}, Available: ${deduction.remaining}. Top up credits in the dashboard.`
+            }
+          }, { status: 402 });
+        }
+
+        asyncCreditsRemaining = deduction.remaining;
+      }
 
       const jobRecord = await jobQueue.addJob({ 
+        id: asyncJobId,
         fingerprint: agentKey.fingerprint,
         agentName: agentKey.agentName,
         toolName,
         toolArgs,
         cost,
+        costDeducted: cost,
         returnType,
         priority: requestedPriority
       }, {
@@ -288,8 +331,8 @@ export async function POST(req: NextRequest) {
         signatureValid: true,
         timestampDriftMs: driftMs,
         nonce,
-        costCredits: 0,
-        creditsRemaining: agentKey.creditsBalance,
+        costCredits: cost,
+        creditsRemaining: asyncCreditsRemaining,
         latencyMs: latency,
         status: "success"
       });

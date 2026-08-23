@@ -11,6 +11,7 @@
  */
 
 import { EventEmitter } from "events";
+import crypto from "crypto";
 import sharp from "sharp";
 import { keyStore } from "../auth/key-store";
 import { telemetryStore } from "../telemetry/store";
@@ -315,6 +316,20 @@ export class QueueWorker extends EventEmitter {
 
       // Final Terminal Failure
       const failedAt = new Date();
+      const reservedCost = job.costDeducted || (job.data as any)?.costDeducted || 0;
+      if (reservedCost > 0) {
+        try {
+          await keyStore.refundCredits(
+            job.fingerprint,
+            reservedCost,
+            `refund-${job.id}`,
+            `Refund for failed job ${job.id}: ${err.message}`
+          );
+        } catch (refundErr) {
+          console.error(`[Worker] Failed to refund ${reservedCost} credits for job ${job.id}:`, refundErr);
+        }
+      }
+
       await this.queue.updateJobStatus(job.id, "failed", {
         progress: 0,
         error: err.message,
@@ -323,7 +338,7 @@ export class QueueWorker extends EventEmitter {
         failedAt: failedAt.toISOString()
       });
 
-      // Log failure to telemetry store (guaranteed 0 credits deducted)
+      // Log failure to telemetry store (guaranteed 0 net credits deducted)
       await telemetryStore.addLog({
         fingerprint: job.fingerprint,
         agentName: job.agentName,
@@ -481,19 +496,22 @@ export class QueueWorker extends EventEmitter {
       throw err;
     }
 
-    // 5. ATOMIC CREDIT SETTLEMENT: Deduct credits ONLY after successful execution!
+    // 5. ATOMIC CREDIT SETTLEMENT: Check if already reserved at enqueue, or deduct now
+    const reservedCost = (payload as any).costDeducted || 0;
     let deductionRemaining = agentKey.creditsBalance;
-    if (cost > 0) {
+
+    if (cost > 0 && reservedCost < cost) {
+      const remainingToDeduct = cost - reservedCost;
       const uniqueJobRef = jobId || (payload as any).jobId || `job:${crypto.randomUUID()}`;
       const deduction = await keyStore.deductCredits(
         fingerprint,
-        cost,
+        remainingToDeduct,
         uniqueJobRef,
         toolName
       );
 
       if (!deduction.success) {
-        throw new Error(`Credit settlement failed: ${deduction.error || "Unable to deduct credits."}`);
+        throw new NonRetryableJobError(`Credit settlement failed: ${deduction.error || "Unable to deduct credits."}`);
       }
       deductionRemaining = deduction.remaining;
     }

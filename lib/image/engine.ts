@@ -127,8 +127,179 @@ export async function validateSafeRemoteUrl(urlString: string): Promise<URL> {
   return parsed;
 }
 
+import http from "http";
+import https from "https";
+
 /**
- * Safely fetches a remote image with SSRF checks, redirect bounds, 10s timeout, and chunk-by-chunk stream capping
+ * Socket-level DNS lookup callback that validates resolved IPs against private CIDRs
+ * and pins the verified IP directly to the socket connection (preventing DNS rebinding SSRF)
+ */
+function secureDnsLookup(
+  hostname: string,
+  options: any,
+  callback: (err: Error | null, address?: string, family?: number) => void
+): void {
+  // Hostname string checks before DNS resolution
+  const lowerHost = hostname.toLowerCase();
+  if (
+    lowerHost === "localhost" ||
+    lowerHost.endsWith(".localhost") ||
+    lowerHost.endsWith(".local") ||
+    lowerHost.endsWith(".internal") ||
+    lowerHost === "169.254.169.254" ||
+    lowerHost === "metadata.google.internal"
+  ) {
+    return callback(new Error(`SSRF Violation: Hostname '${hostname}' is a restricted private or metadata host.`));
+  }
+
+  dns.lookup(hostname, { all: true }, (err, addresses) => {
+    if (err) return callback(err);
+    if (!addresses || addresses.length === 0) {
+      return callback(new Error(`DNS resolution failed for hostname '${hostname}'`));
+    }
+
+    for (const record of addresses) {
+      if (isPrivateOrBlockedIp(record.address)) {
+        return callback(
+          new Error(`SSRF Violation: Hostname '${hostname}' resolved to blocked private/internal IP '${record.address}'.`)
+        );
+      }
+    }
+
+    // Pin the verified public IP address directly to the outgoing socket
+    callback(null, addresses[0].address, addresses[0].family);
+  });
+}
+
+/**
+ * Executes an HTTP/HTTPS request with socket-level DNS pinning and streaming byte/time bounds
+ */
+function makePinnedHttpRequest(
+  targetUrl: URL,
+  maxSizeBytes: number,
+  timeoutMs: number = 15000,
+  inactivityTimeoutMs: number = 5000
+): Promise<{ buffer: Buffer; mimeType: string; statusCode: number; location?: string }> {
+  return new Promise((resolve, reject) => {
+    const isHttps = targetUrl.protocol === "https:";
+    const transport = isHttps ? https : http;
+
+    let totalBytes = 0;
+    const chunks: Buffer[] = [];
+    let isSettled = false;
+
+    const cleanup = () => {
+      clearTimeout(masterTimer);
+      clearTimeout(inactivityTimer);
+    };
+
+    const fail = (err: Error) => {
+      if (isSettled) return;
+      isSettled = true;
+      cleanup();
+      req.destroy();
+      reject(err);
+    };
+
+    // Master Wall-Clock Deadline across entire request (headers + body stream)
+    const masterTimer = setTimeout(() => {
+      fail(new Error(`Remote image fetch timed out after ${Math.round(timeoutMs / 1000)} seconds (${targetUrl.toString()})`));
+    }, timeoutMs);
+
+    // Inactivity / Slowloris Timer between chunks
+    let inactivityTimer = setTimeout(() => {
+      fail(new Error(`Remote image stream stalled (no data received for ${Math.round(inactivityTimeoutMs / 1000)} seconds)`));
+    }, inactivityTimeoutMs);
+
+    const resetInactivityTimer = () => {
+      clearTimeout(inactivityTimer);
+      if (!isSettled) {
+        inactivityTimer = setTimeout(() => {
+          fail(new Error(`Remote image stream stalled (no data received for ${Math.round(inactivityTimeoutMs / 1000)} seconds)`));
+        }, inactivityTimeoutMs);
+      }
+    };
+
+    const req = transport.request(
+      targetUrl,
+      {
+        method: "GET",
+        lookup: secureDnsLookup as any,
+        headers: {
+          "User-Agent": "PixelMesh-ImageEngine/1.0",
+          Accept: "image/png,image/jpeg,image/webp,image/avif,image/*;q=0.9"
+        }
+      },
+      (res) => {
+        resetInactivityTimer();
+
+        const statusCode = res.statusCode || 0;
+
+        // Handle Redirects
+        if (statusCode >= 300 && statusCode < 400) {
+          const location = res.headers.location;
+          cleanup();
+          isSettled = true;
+          return resolve({
+            buffer: Buffer.alloc(0),
+            mimeType: "",
+            statusCode,
+            location
+          });
+        }
+
+        if (statusCode < 200 || statusCode >= 300) {
+          return fail(new Error(`Failed to fetch image from URL: ${targetUrl.toString()} (${statusCode} ${res.statusMessage || ""})`));
+        }
+
+        const contentLength = res.headers["content-length"];
+        if (contentLength && parseInt(contentLength, 10) > maxSizeBytes) {
+          return fail(
+            new Error(
+              `Remote image size (${(parseInt(contentLength, 10) / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed ${(maxSizeBytes / (1024 * 1024)).toFixed(0)}MB limit.`
+            )
+          );
+        }
+
+        const mimeType = res.headers["content-type"] || "image/png";
+
+        res.on("data", (chunk: Buffer) => {
+          resetInactivityTimer();
+          totalBytes += chunk.length;
+          if (totalBytes > maxSizeBytes) {
+            res.destroy();
+            return fail(
+              new Error(
+                `Remote image size (${(totalBytes / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed ${(maxSizeBytes / (1024 * 1024)).toFixed(0)}MB limit.`
+              )
+            );
+          }
+          chunks.push(chunk);
+        });
+
+        res.on("end", () => {
+          if (isSettled) return;
+          isSettled = true;
+          cleanup();
+          resolve({
+            buffer: Buffer.concat(chunks),
+            mimeType,
+            statusCode
+          });
+        });
+
+        res.on("error", (err) => fail(err));
+      }
+    );
+
+    req.on("error", (err) => fail(err));
+    req.end();
+  });
+}
+
+/**
+ * Safely fetches a remote image with socket-level DNS pinning, redirect bounds,
+ * wall-clock stream deadlines, and chunk-by-chunk stream capping.
  */
 export async function fetchSafeRemoteImage(
   urlString: string,
@@ -139,32 +310,14 @@ export async function fetchSafeRemoteImage(
   const MAX_REDIRECTS = 3;
 
   while (true) {
-    await validateSafeRemoteUrl(currentUrl);
+    const parsed = await validateSafeRemoteUrl(currentUrl);
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const result = await makePinnedHttpRequest(parsed, maxSizeBytes);
 
-    let res: Response;
-    try {
-      res = await fetch(currentUrl, {
-        signal: controller.signal,
-        redirect: "manual"
-      });
-    } catch (err: any) {
-      clearTimeout(timeoutId);
-      if (err.name === "AbortError") {
-        throw new Error(`Remote image fetch timed out after 10 seconds (${currentUrl})`);
-      }
-      throw err;
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    // Handle Redirects with per-hop SSRF validation
-    if (res.status >= 300 && res.status < 400) {
-      const location = res.headers.get("location");
-      if (!location) {
-        throw new Error(`Redirect response (${res.status}) missing Location header from ${currentUrl}`);
+    // Handle Redirects with per-hop validation
+    if (result.statusCode >= 300 && result.statusCode < 400) {
+      if (!result.location) {
+        throw new Error(`Redirect response (${result.statusCode}) missing Location header from ${currentUrl}`);
       }
 
       redirectCount++;
@@ -172,52 +325,15 @@ export async function fetchSafeRemoteImage(
         throw new Error(`Too many redirects (exceeded maximum of ${MAX_REDIRECTS} redirects)`);
       }
 
-      currentUrl = new URL(location, currentUrl).toString();
+      currentUrl = new URL(result.location, currentUrl).toString();
       continue;
     }
 
-    if (!res.ok) {
-      throw new Error(`Failed to fetch image from URL: ${currentUrl} (${res.status} ${res.statusText})`);
+    if (!result.buffer || result.buffer.length === 0) {
+      throw new Error(`Remote image response from ${currentUrl} contained 0 bytes.`);
     }
 
-    // Check content-length header if provided
-    const contentLength = res.headers.get("content-length");
-    if (contentLength && parseInt(contentLength, 10) > maxSizeBytes) {
-      throw new Error(
-        `Remote image size (${(parseInt(contentLength, 10) / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed ${(maxSizeBytes / (1024 * 1024)).toFixed(0)}MB limit.`
-      );
-    }
-
-    // Stream response chunks with live byte counter to prevent memory exhaustion
-    if (!res.body) {
-      throw new Error(`Remote image response from ${currentUrl} has no body.`);
-    }
-
-    const reader = res.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let receivedBytes = 0;
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        receivedBytes += value.length;
-        if (receivedBytes > maxSizeBytes) {
-          try { await reader.cancel(); } catch {}
-          throw new Error(
-            `Remote image size (${(receivedBytes / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed ${(maxSizeBytes / (1024 * 1024)).toFixed(0)}MB limit.`
-          );
-        }
-        chunks.push(value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-
-    const buffer = Buffer.concat(chunks);
-    const mimeType = res.headers.get("content-type") || "image/png";
-    return { buffer, mimeType };
+    return { buffer: result.buffer, mimeType: result.mimeType };
   }
 }
 

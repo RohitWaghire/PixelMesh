@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "crypto";
 import { keyStore } from "@/lib/auth/key-store";
 import { verifyRequestSignature } from "@/lib/auth/agent-crypto";
 import { nonceCache } from "@/lib/auth/nonce-cache";
@@ -189,37 +190,55 @@ export async function POST(req: NextRequest) {
   const cost = toolName === "get_image_metadata" ? 0 : isHighRes ? 5 : toolName === "batch_filter_pipeline" ? 3 : 1;
 
 
-  if (agentKey.creditsBalance < cost) {
-    await telemetryStore.addLog({
-      agentKeyId: agentKey.id,
-      timestamp: new Date().toISOString(),
-      method: "jobs/submit",
-      toolName,
-      fingerprint,
-      agentName: agentKey.agentName,
-      signatureValid: true,
-      timestampDriftMs: driftMs,
-      nonce,
-      costCredits: 0,
-      creditsRemaining: agentKey.creditsBalance,
-      latencyMs: Math.round(performance.now() - startTime),
-      status: "rate_limited",
-      errorMessage: `Insufficient credits (requires ${cost}, has ${agentKey.creditsBalance})`
-    });
+  const jobId = `job_${Date.now().toString(36)}_${crypto.randomBytes(6).toString("hex")}`;
+  let creditsRemaining = agentKey.creditsBalance;
 
-    return NextResponse.json({
-      success: false,
-      error: `Insufficient Credits. Required: ${cost}, Available: ${agentKey.creditsBalance}. Top up credits in the dashboard.`
-    }, { status: 402 });
+  // 1. ATOMIC CREDIT RESERVATION UPFRONT: Prevents concurrency overdraw & unbillable compute spam
+  if (cost > 0) {
+    const deduction = await keyStore.deductCredits(
+      fingerprint,
+      cost,
+      jobId,
+      toolName
+    );
+
+    if (!deduction.success) {
+      await telemetryStore.addLog({
+        agentKeyId: agentKey.id,
+        timestamp: new Date().toISOString(),
+        method: "jobs/submit",
+        toolName,
+        fingerprint,
+        agentName: agentKey.agentName,
+        signatureValid: true,
+        timestampDriftMs: driftMs,
+        nonce,
+        costCredits: 0,
+        creditsRemaining: deduction.remaining,
+        latencyMs: Math.round(performance.now() - startTime),
+        status: "rate_limited",
+        errorMessage: deduction.error || `Insufficient credits (requires ${cost})`
+      });
+
+      return NextResponse.json({
+        success: false,
+        error: `Insufficient Credits. Required: ${cost}, Available: ${deduction.remaining}. Top up credits in the dashboard.`
+      }, { status: 402 });
+    }
+
+    creditsRemaining = deduction.remaining;
   }
 
+  // 2. Enqueue Job into Resilient Task Queue with pre-reserved credit status
   const jobRecord = await jobQueue.addJob(
     {
+      id: jobId,
       fingerprint: agentKey.fingerprint,
       agentName: agentKey.agentName,
       toolName,
       toolArgs,
       cost,
+      costDeducted: cost,
       returnType,
       priority: requestedPriority,
       maxRetries

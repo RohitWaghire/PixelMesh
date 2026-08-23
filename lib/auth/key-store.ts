@@ -532,6 +532,53 @@ export class KeyStore {
   }
 
   /**
+   * Atomic credit refund with REFUND ledger record (e.g. on unrecoverable worker crash)
+   */
+  public async refundCredits(
+    fingerprint: string,
+    amount: number,
+    referenceId?: string,
+    reason?: string
+  ): Promise<AuthorizedAgentKey> {
+    if (amount <= 0) {
+      const existing = await this.findKeyByFingerprint(fingerprint);
+      if (!existing) throw new Error("Agent key not found");
+      return existing;
+    }
+
+    return await prisma.$transaction(async (tx) => {
+      const key = await tx.agentKey.findUnique({
+        where: { fingerprint }
+      });
+
+      if (!key) {
+        throw new Error("Agent key not found");
+      }
+
+      const newBalance = key.creditsBalance + amount;
+
+      const updated = await tx.agentKey.update({
+        where: { id: key.id },
+        data: {
+          creditsBalance: { increment: amount }
+        }
+      });
+
+      await tx.creditTransaction.create({
+        data: {
+          agentKeyId: key.id,
+          amount,
+          balanceAfter: newBalance,
+          type: "REFUND",
+          referenceId: referenceId || `refund-${Date.now()}`
+        }
+      });
+
+      return toAuthorizedAgentKey(updated);
+    });
+  }
+
+  /**
    * Revoke an active agent key
    */
   public async revokeKey(fingerprint: string): Promise<AuthorizedAgentKey> {

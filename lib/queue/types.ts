@@ -30,6 +30,7 @@ export interface JobPayload {
   toolName: string;                          // MCP tool name (e.g. crop_image, batch_filter_pipeline)
   toolArgs: Record<string, any>;             // Input parameters (image_base64, image_key, ops, etc.)
   cost: number;                              // Credits to deduct upon successful completion
+  costDeducted?: number;                     // Credits pre-reserved at enqueue time
   returnType?: ReturnType;                   // Preferred output format (default: 'base64')
   priority?: JobPriority;                    // Job priority tag (default: 'default')
   maxRetries?: number;                       // Max retry attempts on failure (default: 3)

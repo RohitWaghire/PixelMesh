@@ -188,6 +188,8 @@ function makePinnedHttpRequest(
     const chunks: Buffer[] = [];
     let isSettled = false;
 
+    let activeRes: http.IncomingMessage | null = null;
+
     const cleanup = () => {
       clearTimeout(masterTimer);
       clearTimeout(inactivityTimer);
@@ -197,7 +199,8 @@ function makePinnedHttpRequest(
       if (isSettled) return;
       isSettled = true;
       cleanup();
-      req.destroy();
+      try { activeRes?.destroy(); } catch {}
+      try { req.destroy(); } catch {}
       reject(err);
     };
 
@@ -231,6 +234,7 @@ function makePinnedHttpRequest(
         }
       },
       (res) => {
+        activeRes = res;
         resetInactivityTimer();
 
         const statusCode = res.statusCode || 0;
@@ -240,8 +244,8 @@ function makePinnedHttpRequest(
           const location = res.headers.location;
           cleanup();
           isSettled = true;
-          res.destroy(); // Terminate incoming response body stream immediately
-          req.destroy(); // Terminate underlying socket connection immediately
+          try { res.destroy(); } catch {}
+          try { req.destroy(); } catch {}
           return resolve({
             buffer: Buffer.alloc(0),
             mimeType: "",
@@ -251,19 +255,11 @@ function makePinnedHttpRequest(
         }
 
         if (statusCode < 200 || statusCode >= 300) {
-          cleanup();
-          isSettled = true;
-          res.destroy();
-          req.destroy();
           return fail(new Error(`Failed to fetch image from URL: ${targetUrl.toString()} (${statusCode} ${res.statusMessage || ""})`));
         }
 
         const contentLength = res.headers["content-length"];
         if (contentLength && parseInt(contentLength, 10) > maxSizeBytes) {
-          cleanup();
-          isSettled = true;
-          res.destroy();
-          req.destroy();
           return fail(
             new Error(
               `Remote image size (${(parseInt(contentLength, 10) / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed ${(maxSizeBytes / (1024 * 1024)).toFixed(0)}MB limit.`
@@ -277,10 +273,6 @@ function makePinnedHttpRequest(
           resetInactivityTimer();
           totalBytes += chunk.length;
           if (totalBytes > maxSizeBytes) {
-            cleanup();
-            isSettled = true;
-            res.destroy();
-            req.destroy();
             return fail(
               new Error(
                 `Remote image size (${(totalBytes / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed ${(maxSizeBytes / (1024 * 1024)).toFixed(0)}MB limit.`
@@ -301,12 +293,7 @@ function makePinnedHttpRequest(
           });
         });
 
-        res.on("error", (err) => {
-          cleanup();
-          isSettled = true;
-          req.destroy();
-          fail(err);
-        });
+        res.on("error", (err) => fail(err));
       }
     );
 

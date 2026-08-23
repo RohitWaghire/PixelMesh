@@ -142,7 +142,8 @@ export async function POST(req: NextRequest) {
   const toolArgs = params.arguments || params.args || bodyJson.arguments || bodyJson.params || bodyJson.toolArgs || {};
   const requestedPriority: JobPriority = params.priority || bodyJson.priority || toolArgs.priority || inferJobPriority(toolName, toolArgs);
   const returnType: ReturnType = params.return_type || params.returnType || bodyJson.return_type || bodyJson.returnType || toolArgs.return_type || toolArgs.returnType || "base64";
-  const maxRetries: number = params.max_retries || params.maxRetries || bodyJson.max_retries || bodyJson.maxRetries || toolArgs.max_retries || toolArgs.maxRetries || 3;
+  const rawRetries = params.max_retries ?? params.maxRetries ?? bodyJson.max_retries ?? bodyJson.maxRetries ?? toolArgs.max_retries ?? toolArgs.maxRetries ?? 3;
+  const maxRetries: number = Math.min(Math.max(0, typeof rawRetries === "number" ? Math.floor(rawRetries) : 3), 3);
 
   if (!toolName) {
     return NextResponse.json({

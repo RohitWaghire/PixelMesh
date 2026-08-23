@@ -396,3 +396,51 @@ test("sec-remediation: reserved job executes successfully through QueueWorker wh
     await worker.stop();
   }
 });
+
+test("sec-remediation: maxRetries is strictly capped to system limit (3) to prevent unbilled compute", async () => {
+  const keypair = generateAgentKeypair("ed25519");
+  const agent = await keyStore.registerKey({
+    agentName: "Malicious Retry Agent",
+    publicKeyPem: keypair.publicKeyPem,
+    initialCredits: 10
+  });
+
+  const payloadBody = JSON.stringify({
+    tool: "grayscale_image",
+    arguments: {
+      image_base64: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    },
+    max_retries: 10000 // Attempting to request 10,000 retries!
+  });
+
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const nonce = `max-retry-nonce-${Math.random().toString(36).substring(2, 9)}`;
+  const signature = signRequestPayload({
+    privateKeyPem: keypair.privateKeyPem,
+    method: "POST",
+    path: "/api/mcp/jobs",
+    timestamp,
+    nonce,
+    body: payloadBody
+  });
+
+  const req = new NextRequest("http://localhost:3000/api/mcp/jobs", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-agent-key-fingerprint": agent.fingerprint,
+      "x-agent-timestamp": timestamp,
+      "x-agent-nonce": nonce,
+      "x-agent-signature": signature
+    },
+    body: payloadBody
+  });
+
+  const res = await jobsPostHandler(req);
+  assert.equal(res.status, 202);
+  const json = await res.json();
+
+  const job = await jobQueue.getJob(json.job_id);
+  assert.ok(job);
+  assert.equal(job.maxRetries, 3, "maxRetries must be clamped to system maximum (3)");
+});

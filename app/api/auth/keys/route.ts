@@ -1,71 +1,119 @@
 import { NextRequest, NextResponse } from "next/server";
 import { keyStore } from "@/lib/auth/key-store";
-import { generateAgentKeypair } from "@/lib/auth/agent-crypto";
+import { verifyRequestSignature } from "@/lib/auth/agent-crypto";
+import { nonceCache } from "@/lib/auth/nonce-cache";
 
+/**
+ * GET /api/auth/keys
+ * Returns public metadata for registered agent keys.
+ * NEVER returns private keys.
+ */
 export async function GET() {
-  const keys = await keyStore.listKeys();
-  const devKeypair = keyStore.getDevKeypair();
+  const allKeys = await keyStore.listKeys();
+  
+  // Sanitize to ensure only public fields are exposed
+  const publicKeys = allKeys.map(k => ({
+    fingerprint: k.fingerprint,
+    agentName: k.agentName,
+    publicKeyPem: k.publicKeyPem,
+    algorithm: k.algorithm,
+    creditsBalance: k.creditsBalance,
+    scopes: k.scopes,
+    totalInvocations: k.totalInvocations,
+    status: k.status,
+    createdAt: k.createdAt,
+    lastUsedAt: k.lastUsedAt
+  }));
 
   return NextResponse.json({
-    keys,
-    devKeypair: devKeypair ? {
-      fingerprint: devKeypair.fingerprint || keys[0]?.fingerprint,
-      publicKeyPem: devKeypair.publicKeyPem || devKeypair.keypair?.publicKeyPem,
-      privateKeyPem: devKeypair.privateKeyPem || devKeypair.keypair?.privateKeyPem
-    } : null
+    keys: publicKeys
   });
 }
 
+/**
+ * POST /api/auth/keys
+ * Protected administrative action plane.
+ * Requires cryptographic signature from the key owner or authorized admin key.
+ */
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { action, fingerprint, amount, algorithm = "ed25519", agent_name, public_key } = body;
+    const rawBody = await req.text();
+    let body: any = {};
+    try {
+      body = rawBody ? JSON.parse(rawBody) : {};
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
 
-    if (action === "generate") {
-      const keypair = generateAgentKeypair(algorithm);
-      const registered = await keyStore.registerKey({
-        agentName: agent_name || `Generated Agent (${algorithm})`,
-        publicKeyPem: keypair.publicKeyPem,
-        algorithm,
-        initialCredits: 100
-      });
+    const { action, fingerprint } = body;
+
+    // Extract cryptographic signature headers
+    const callerFingerprint = req.headers.get("x-agent-key-fingerprint");
+    const timestampStr = req.headers.get("x-agent-timestamp");
+    const nonce = req.headers.get("x-agent-nonce");
+    const signature = req.headers.get("x-agent-signature");
+
+    if (!callerFingerprint || !timestampStr || !nonce || !signature) {
       return NextResponse.json({
-        success: true,
-        keypair,
-        agent: registered
-      });
+        error: "Unauthorized: Missing required cryptographic authentication headers (X-Agent-Key-Fingerprint, X-Agent-Timestamp, X-Agent-Nonce, X-Agent-Signature)."
+      }, { status: 401 });
     }
 
-    if (action === "topup") {
-      if (!fingerprint || !amount) {
-        return NextResponse.json({ error: "Missing fingerprint or amount" }, { status: 400 });
-      }
-      const updated = await keyStore.topUpCredits(fingerprint, Number(amount));
-      return NextResponse.json({ success: true, agent: updated });
+    const timestampNum = parseInt(timestampStr, 10);
+    const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum);
+    if (!nonceCheck.valid) {
+      return NextResponse.json({
+        error: `Unauthorized: ${nonceCheck.reason}`
+      }, { status: nonceCheck.statusCode || 401 });
     }
 
+    const callerKey = await keyStore.findKeyByFingerprint(callerFingerprint);
+    if (!callerKey || callerKey.status === "revoked") {
+      return NextResponse.json({
+        error: "Unauthorized: Agent key not found or revoked."
+      }, { status: 401 });
+    }
+
+    const isValidSig = verifyRequestSignature({
+      publicKeyPem: callerKey.publicKeyPem,
+      signature,
+      method: "POST",
+      path: "/api/auth/keys",
+      timestamp: timestampStr,
+      nonce,
+      body: rawBody
+    });
+
+    if (!isValidSig) {
+      return NextResponse.json({
+        error: "Unauthorized: Cryptographic signature verification failed."
+      }, { status: 401 });
+    }
+
+    // Action: Self-Revocation
     if (action === "revoke") {
       if (!fingerprint) {
-        return NextResponse.json({ error: "Missing fingerprint" }, { status: 400 });
+        return NextResponse.json({ error: "Missing target fingerprint to revoke" }, { status: 400 });
       }
+
+      // Only the key owner or an admin-scoped key can revoke
+      const isOwner = callerFingerprint === fingerprint;
+      const isAdmin = callerKey.scopes?.includes("admin");
+
+      if (!isOwner && !isAdmin) {
+        return NextResponse.json({
+          error: "Forbidden: You are not authorized to revoke this key."
+        }, { status: 403 });
+      }
+
       const updated = await keyStore.revokeKey(fingerprint);
       return NextResponse.json({ success: true, agent: updated });
     }
 
-    if (action === "add") {
-      if (!public_key) {
-        return NextResponse.json({ error: "Missing public_key" }, { status: 400 });
-      }
-      const registered = await keyStore.registerKey({
-        agentName: agent_name || "Custom Agent",
-        publicKeyPem: public_key,
-        algorithm,
-        initialCredits: 100
-      });
-      return NextResponse.json({ success: true, agent: registered });
-    }
+    return NextResponse.json({
+      error: `Forbidden: Action '${action}' is not permitted via public API. Key enrollment must use /api/auth/register with proof-of-possession.`
+    }, { status: 403 });
 
-    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

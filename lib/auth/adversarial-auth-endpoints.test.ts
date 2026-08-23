@@ -21,6 +21,7 @@ import { resetMockRedis, getRedisClient } from "../redis/client";
 import { POST as registerHandler } from "../../app/api/auth/register/route";
 import { GET as keysGetHandler, POST as keysPostHandler } from "../../app/api/auth/keys/route";
 import { POST as mcpHandler } from "../../app/api/mcp/route";
+import { GET as telemetryGetHandler, DELETE as telemetryDeleteHandler } from "../../app/api/telemetry/logs/route";
 import { telemetryStore } from "../telemetry/store";
 
 beforeEach(async () => {
@@ -578,7 +579,7 @@ test("adversarial 3.3: key revocation blocks top-up and credit deduction at serv
     await keyStore.topUpCredits(agent.fingerprint, 50);
   }, /revoked/);
 
-  // 3. /api/auth/keys topup action on revoked key returns HTTP 500
+  // 3. /api/auth/keys unauthenticated action returns HTTP 401 Unauthorized
   const topupReq = new NextRequest("http://localhost:3000/api/auth/keys", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -589,8 +590,8 @@ test("adversarial 3.3: key revocation blocks top-up and credit deduction at serv
     })
   });
   const topupRes = await keysPostHandler(topupReq);
-  assert.equal(topupRes.status, 500);
-  assert.ok((await topupRes.json()).error.includes("revoked"));
+  assert.equal(topupRes.status, 401);
+  assert.ok((await topupRes.json()).error.includes("Unauthorized"));
 });
 
 test("adversarial 3.4: revoked key attempting resources/list is blocked with HTTP 401", async () => {
@@ -1236,4 +1237,148 @@ test("adversarial 4.13: telemetry audit log relational persistence verification 
   assert.equal(successLog.costCredits, 1);
   assert.equal(successLog.creditsRemaining, 49);
 });
+
+// ============================================================================
+// Area 6: Admin Plane Hardening & Zero-Leakage Security Verification
+// ============================================================================
+
+test("security 6.1: GET /api/auth/keys strictly NEVER leaks privateKeyPem", async () => {
+  const keypair = generateAgentKeypair("ed25519");
+  await keyStore.registerKey({
+    agentName: "Leakage-Probe-Agent",
+    publicKeyPem: keypair.publicKeyPem,
+    initialCredits: 100
+  });
+
+  const res = await keysGetHandler();
+  assert.equal(res.status, 200);
+  const data = await res.json();
+
+  assert.ok(Array.isArray(data.keys));
+  assert.ok(data.keys.length > 0);
+
+  // Assert absolutely 0 privateKeyPem or secret fields in any key record
+  for (const k of data.keys) {
+    assert.equal(k.privateKeyPem, undefined);
+    assert.equal((k as any).private_key, undefined);
+    assert.equal((k as any).secret, undefined);
+  }
+
+  // Assert devKeypair is not leaked
+  assert.equal(data.devKeypair, undefined);
+});
+
+test("security 6.2: unauthenticated POST /api/auth/keys actions are rejected with 401", async () => {
+  const keypair = generateAgentKeypair("ed25519");
+  const agent = await keyStore.registerKey({
+    agentName: "Victim-Agent",
+    publicKeyPem: keypair.publicKeyPem,
+    initialCredits: 100
+  });
+
+  // Attempt unauthenticated revocation
+  const revokeReq = new NextRequest("http://localhost:3000/api/auth/keys", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "revoke", fingerprint: agent.fingerprint })
+  });
+  const revokeRes = await keysPostHandler(revokeReq);
+  assert.equal(revokeRes.status, 401);
+  assert.ok((await revokeRes.json()).error.includes("Unauthorized"));
+
+  // Key must still be active
+  const checkKey = await keyStore.findKeyByFingerprint(agent.fingerprint);
+  assert.equal(checkKey?.status, "active");
+});
+
+test("security 6.3: signed self-revocation succeeds, while cross-agent revocation is rejected with 403", async () => {
+  const victimKeypair = generateAgentKeypair("ed25519");
+  const victim = await keyStore.registerKey({
+    agentName: "Victim-Agent-2",
+    publicKeyPem: victimKeypair.publicKeyPem,
+    initialCredits: 100
+  });
+
+  const attackerKeypair = generateAgentKeypair("ed25519");
+  const attacker = await keyStore.registerKey({
+    agentName: "Attacker-Agent",
+    publicKeyPem: attackerKeypair.publicKeyPem,
+    initialCredits: 100
+  });
+
+  // 1. Attacker signs a request trying to revoke Victim's key
+  const attackBody = JSON.stringify({ action: "revoke", fingerprint: victim.fingerprint });
+  const ts1 = Math.floor(Date.now() / 1000).toString();
+  const nonce1 = "attack-nonce-" + crypto.randomUUID();
+  const attackSig = signRequestPayload({
+    privateKeyPem: attackerKeypair.privateKeyPem,
+    method: "POST",
+    path: "/api/auth/keys",
+    timestamp: ts1,
+    nonce: nonce1,
+    body: attackBody
+  });
+
+  const attackReq = new NextRequest("http://localhost:3000/api/auth/keys", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-agent-key-fingerprint": attacker.fingerprint,
+      "x-agent-timestamp": ts1,
+      "x-agent-nonce": nonce1,
+      "x-agent-signature": attackSig
+    },
+    body: attackBody
+  });
+
+  const attackRes = await keysPostHandler(attackReq);
+  assert.equal(attackRes.status, 403);
+  assert.ok((await attackRes.json()).error.includes("Forbidden"));
+
+  // Victim key must still be active
+  let victimKey = await keyStore.findKeyByFingerprint(victim.fingerprint);
+  assert.equal(victimKey?.status, "active");
+
+  // 2. Victim signs their OWN revocation request
+  const selfRevokeBody = JSON.stringify({ action: "revoke", fingerprint: victim.fingerprint });
+  const ts2 = Math.floor(Date.now() / 1000).toString();
+  const nonce2 = "self-revoke-nonce-" + crypto.randomUUID();
+  const selfSig = signRequestPayload({
+    privateKeyPem: victimKeypair.privateKeyPem,
+    method: "POST",
+    path: "/api/auth/keys",
+    timestamp: ts2,
+    nonce: nonce2,
+    body: selfRevokeBody
+  });
+
+  const selfReq = new NextRequest("http://localhost:3000/api/auth/keys", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-agent-key-fingerprint": victim.fingerprint,
+      "x-agent-timestamp": ts2,
+      "x-agent-nonce": nonce2,
+      "x-agent-signature": selfSig
+    },
+    body: selfRevokeBody
+  });
+
+  const selfRes = await keysPostHandler(selfReq);
+  assert.equal(selfRes.status, 200);
+  assert.equal((await selfRes.json()).agent.status, "revoked");
+
+  victimKey = await keyStore.findKeyByFingerprint(victim.fingerprint);
+  assert.equal(victimKey?.status, "revoked");
+});
+
+test("security 6.4: unauthenticated DELETE /api/telemetry/logs is rejected with 401", async () => {
+  const delReq = new NextRequest("http://localhost:3000/api/telemetry/logs", {
+    method: "DELETE"
+  });
+  const delRes = await telemetryDeleteHandler(delReq);
+  assert.equal(delRes.status, 401);
+  assert.ok((await delRes.json()).error.includes("Unauthorized"));
+});
+
 

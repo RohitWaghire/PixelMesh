@@ -667,6 +667,7 @@ export async function processSingleFilter(
   const filterResult: FilterResult = {
     imageBase64: base64Result,
     image_base64: base64Result,
+    inputSizeBytes: resolved.buffer.length,
     metadata: {
       width: outMeta.width,
       height: outMeta.height,
@@ -708,6 +709,7 @@ export async function processPipeline(
   let currentInput: any = input;
   let finalMeta: ImageMetadata = {};
   let lastResult: FilterResult | null = null;
+  let originalInputSizeBytes = 0;
 
   for (let i = 0; i < operations.length; i++) {
     const op = operations[i];
@@ -719,6 +721,9 @@ export async function processPipeline(
       isLast ? outputFormat : undefined,
       isLast ? effectiveReturnType : "base64"
     );
+    if (i === 0 && res.inputSizeBytes) {
+      originalInputSizeBytes = res.inputSizeBytes;
+    }
     currentInput = res.imageBase64;
     finalMeta = res.metadata;
     lastResult = res;
@@ -734,6 +739,7 @@ export async function processPipeline(
     image_url: lastResult?.image_url,
     publicUrl: lastResult?.publicUrl,
     public_url: lastResult?.public_url,
+    inputSizeBytes: originalInputSizeBytes || lastResult?.inputSizeBytes,
     metadata: finalMeta,
     executionTimeMs: Math.round(duration * 10) / 10
   };

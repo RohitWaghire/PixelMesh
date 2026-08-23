@@ -461,8 +461,13 @@ export async function POST(req: NextRequest) {
         filterResult = await processSingleFilter(toolArgs, toolName, restParams, output_format, returnType);
       }
 
+      // Reconcile Cost dynamically based on resolved input image size (ADR 0005)
+      const inputBytes = filterResult.inputSizeBytes || (toolArgs.image_base64 ? Math.round(toolArgs.image_base64.length * 0.75) : 0);
+      const isActualHighRes = inputBytes > 20 * 1024 * 1024;
+      const actualCost = toolName === "get_image_metadata" ? 0 : isActualHighRes ? 5 : toolName === "batch_filter_pipeline" ? 3 : 1;
+
       // Deduct Credits ONLY after successful execution
-      const deduction = await keyStore.deductCredits(fingerprint, cost, undefined, toolName);
+      const deduction = await keyStore.deductCredits(fingerprint, actualCost, undefined, toolName);
       if (!deduction.success) {
         await telemetryStore.addLog({
           agentKeyId: agentKey.id,
@@ -503,7 +508,7 @@ export async function POST(req: NextRequest) {
         signatureValid: true,
         timestampDriftMs: driftMs,
         nonce,
-        costCredits: cost,
+        costCredits: actualCost,
         creditsRemaining: deduction.remaining,
         latencyMs: latency,
         status: "success"

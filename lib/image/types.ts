@@ -21,6 +21,7 @@ export interface FilterResult {
   image_url?: string;
   publicUrl?: string;
   public_url?: string;
+  inputSizeBytes?: number;
   metadata: ImageMetadata;
   executionTimeMs: number;
 }

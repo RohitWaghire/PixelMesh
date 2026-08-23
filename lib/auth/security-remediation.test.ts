@@ -1,5 +1,6 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import sharp from "sharp";
 import { keyStore } from "./key-store";
 import { generateAgentKeypair, signRequestPayload } from "./agent-crypto";
 import { resetMockDb, prisma } from "../db/prisma";
@@ -14,6 +15,7 @@ import { POST as studioProcessHandler } from "../../app/api/studio/process/route
 import { POST as jobsPostHandler } from "../../app/api/mcp/jobs/route";
 import { jobQueue } from "../queue/job-queue";
 import { QueueWorker } from "../queue/worker";
+import { storageClient } from "../storage/client";
 
 beforeEach(async () => {
   resetMockDb();
@@ -513,4 +515,58 @@ test("sec-remediation: validateSafeRemoteUrl enforces DNS timeout on non-resolvi
     },
     /timed out/
   );
+});
+
+test("sec-remediation: worker reconciles high-res (>20MB) images to 5 credits during settlement", async () => {
+  const keypair = generateAgentKeypair("ed25519");
+  const agent = await keyStore.registerKey({
+    agentName: "High Res Billing Agent",
+    publicKeyPem: keypair.publicKeyPem,
+    initialCredits: 20
+  });
+
+  // Generate an actual uncompressed PNG buffer > 20MB (2700x2700x3 is ~21.8MB)
+  const largePngBuffer = await sharp({
+    create: {
+      width: 2700,
+      height: 2700,
+      channels: 3,
+      background: { r: 120, g: 120, b: 120 }
+    }
+  })
+    .png({ compressionLevel: 0 })
+    .toBuffer();
+
+  assert.ok(largePngBuffer.length > 20 * 1024 * 1024, `Buffer must be > 20MB, got ${(largePngBuffer.length / (1024 * 1024)).toFixed(2)}MB`);
+
+  const uploadRes = await storageClient.putObject({
+    key: "test-high-res-22mb.png",
+    body: largePngBuffer,
+    contentType: "image/png"
+  });
+
+  const worker = new QueueWorker(jobQueue);
+
+  const job = await jobQueue.addJob({
+    fingerprint: agent.fingerprint,
+    agentName: agent.agentName,
+    toolName: "grayscale_image",
+    toolArgs: { image_key: uploadRes.key },
+    cost: 1, // Only 1 credit reserved upfront
+    costDeducted: 1
+  });
+
+  // Deduct 1 credit upfront for reservation
+  await keyStore.deductCredits(agent.fingerprint, 1, `job:${job.id}`);
+  const balAfterReserve = await keyStore.findKeyByFingerprint(agent.fingerprint);
+  assert.equal(balAfterReserve?.creditsBalance, 19);
+
+  // Execute worker through full lifecycle
+  const executedJob = await worker.executeJobWithLifecycle(job);
+  assert.equal(executedJob.status, "completed");
+  assert.equal(executedJob.costDeducted, 5, "Must reconcile to 5 credits for high-res image");
+
+  // Verify final balance: 20 - 5 = 15
+  const finalKey = await keyStore.findKeyByFingerprint(agent.fingerprint);
+  assert.equal(finalKey?.creditsBalance, 15, "Final balance must reflect 5 total credits deducted");
 });

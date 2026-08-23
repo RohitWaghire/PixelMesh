@@ -527,11 +527,16 @@ export class QueueWorker extends EventEmitter {
       throw err;
     }
 
-    // 5. ATOMIC CREDIT SETTLEMENT: Check if already reserved at enqueue, or deduct now
+    // 5. ATOMIC CREDIT SETTLEMENT: Reconcile actual cost based on resolved input image size (ADR 0005)
+    const inputBytes = filterResult.inputSizeBytes || (toolArgs?.image_base64 ? Math.round(toolArgs.image_base64.length * 0.75) : 0);
+    const isActualHighRes = inputBytes > 20 * 1024 * 1024;
+    const defaultToolCost = toolName === "get_image_metadata" ? 0 : isActualHighRes ? 5 : toolName === "batch_filter_pipeline" ? 3 : 1;
+    const finalCost = isActualHighRes ? 5 : (typeof payload.cost === "number" ? payload.cost : defaultToolCost);
+
     let deductionRemaining = agentKey.creditsBalance;
 
-    if (cost > 0 && reservedCost < cost) {
-      const remainingToDeduct = cost - reservedCost;
+    if (finalCost > 0 && reservedCost < finalCost) {
+      const remainingToDeduct = finalCost - reservedCost;
       const uniqueJobRef = jobId || (payload as any).jobId || `job:${crypto.randomUUID()}`;
       const deduction = await keyStore.deductCredits(
         fingerprint,
@@ -541,7 +546,7 @@ export class QueueWorker extends EventEmitter {
       );
 
       if (!deduction.success) {
-        throw new NonRetryableJobError(`Credit settlement failed: ${deduction.error || "Unable to deduct credits."}`);
+        throw new NonRetryableJobError(`Credit settlement failed for high-res work: ${deduction.error || "Unable to deduct credits."}`);
       }
       deductionRemaining = deduction.remaining;
     }
@@ -556,7 +561,7 @@ export class QueueWorker extends EventEmitter {
       method: "tools/call",
       toolName,
       status: "success",
-      costCredits: cost,
+      costCredits: finalCost,
       creditsRemaining: deductionRemaining,
       latencyMs: durationMs,
       nonce: `async-job-${jobId || Date.now()}`,
@@ -587,11 +592,10 @@ export class QueueWorker extends EventEmitter {
       resultObj.imageBase64 = filterResult.imageBase64;
       resultObj.image_base64 = filterResult.imageBase64;
     }
-    if (filterResult.imageKey || filterResult.image_key) {
+
+    if (filterResult.imageKey || filterResult.imageUrl) {
       resultObj.imageKey = filterResult.image_key || filterResult.imageKey;
       resultObj.image_key = resultObj.imageKey;
-    }
-    if (filterResult.imageUrl || filterResult.image_url || filterResult.publicUrl) {
       resultObj.imageUrl = filterResult.image_url || filterResult.imageUrl || filterResult.publicUrl;
       resultObj.image_url = resultObj.imageUrl;
       resultObj.publicUrl = resultObj.imageUrl;
@@ -601,7 +605,7 @@ export class QueueWorker extends EventEmitter {
     return {
       status: "completed",
       result: resultObj,
-      costDeducted: cost,
+      costDeducted: finalCost,
       balanceAfter: deductionRemaining,
       durationMs,
       completedAt: new Date().toISOString()

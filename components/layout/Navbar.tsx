@@ -2,6 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { Sparkles, Layers, ShieldCheck, BookOpen, Terminal, ArrowUpRight, Code2 } from "lucide-react";
 
@@ -19,8 +20,15 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Brand Logo & Version Pill */}
         <Link href="/" className="flex items-center gap-3 group">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-950/50 group-hover:scale-105 transition-transform duration-200">
-            <Sparkles className="w-4 h-4 text-black font-bold" />
+          <div className="relative w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center group-hover:scale-105 transition-transform duration-200">
+            <Image
+              src="/logo.png"
+              alt="PixelMesh Logo"
+              width={32}
+              height={32}
+              className="w-full h-full object-contain drop-shadow-[0_0_10px_rgba(16,185,129,0.5)]"
+              priority
+            />
           </div>
           <div className="flex items-center gap-2">
             <span className="font-bold text-base tracking-tight text-white group-hover:text-emerald-400 transition-colors">

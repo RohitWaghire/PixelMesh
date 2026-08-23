@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 import HeroSplitDemo from "@/components/landing/HeroSplitDemo";
@@ -124,8 +125,14 @@ export default function Home() {
 
         <div className="flex flex-col items-center text-center space-y-6 max-w-3xl mx-auto">
           {/* Eyebrow Pill */}
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-950/40 text-emerald-400 text-xs font-mono">
-            <Sparkles className="w-3.5 h-3.5" />
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-950/40 text-emerald-400 text-xs font-mono shadow-sm shadow-emerald-950/50">
+            <Image
+              src="/logo.png"
+              alt="PixelMesh Logo"
+              width={16}
+              height={16}
+              className="w-4 h-4 object-contain drop-shadow-[0_0_6px_rgba(16,185,129,0.6)]"
+            />
             <span>AGENT-FIRST IMAGE INFRASTRUCTURE · MCP COMPATIBLE</span>
           </div>
 

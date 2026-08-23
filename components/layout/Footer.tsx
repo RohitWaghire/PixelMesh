@@ -2,6 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { Sparkles, Terminal, FileText, Shield, ExternalLink, Code2 } from "lucide-react";
 
 export default function Footer() {
@@ -11,9 +12,15 @@ export default function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
           {/* Col 1: Brand & Purpose */}
           <div className="space-y-3 md:col-span-1">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded bg-emerald-500 flex items-center justify-center">
-                <Sparkles className="w-3.5 h-3.5 text-black font-bold" />
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-lg overflow-hidden flex items-center justify-center">
+                <Image
+                  src="/logo.png"
+                  alt="PixelMesh Logo"
+                  width={28}
+                  height={28}
+                  className="w-full h-full object-contain drop-shadow-[0_0_8px_rgba(16,185,129,0.4)]"
+                />
               </div>
               <span className="font-bold text-sm text-white">PixelMesh</span>
             </div>

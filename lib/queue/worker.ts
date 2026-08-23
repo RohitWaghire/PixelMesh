@@ -120,11 +120,19 @@ export class QueueWorker extends EventEmitter {
       this.bullWorker = new Worker(
         this.queue.getQueueName(),
         async (bullJob: any) => {
-          return await this.processJobData(
-            bullJob.data,
-            bullJob.attemptsMade + 1,
-            (progress: number) => bullJob.updateProgress(progress)
-          );
+          try {
+            return await this.processJobData(
+              bullJob.data,
+              bullJob.attemptsMade + 1,
+              (progress: number) => bullJob.updateProgress(progress)
+            );
+          } catch (err: any) {
+            const isNonRetryable = err instanceof NonRetryableJobError || Boolean(err.isNonRetryable);
+            if (isNonRetryable && typeof bullJob.discard === "function") {
+              try { await bullJob.discard(); } catch {}
+            }
+            throw err;
+          }
         },
         {
           connection: ioredis,
@@ -133,11 +141,32 @@ export class QueueWorker extends EventEmitter {
       );
 
       this.bullWorker.on("completed", (job: any, result: any) => {
-        this.emit("job:completed", { jobId: job.id, result });
+        this.emit("job:completed", { jobId: job?.id, result });
       });
 
-      this.bullWorker.on("failed", (job: any, err: any) => {
-        this.emit("job:failed", { jobId: job.id, error: err.message });
+      this.bullWorker.on("failed", async (job: any, err: any) => {
+        const attemptsMade = job?.attemptsMade ?? 1;
+        const maxAttempts = job?.opts?.attempts ?? this.options.maxRetries ?? 3;
+        const isNonRetryable = err instanceof NonRetryableJobError || Boolean(err?.isNonRetryable);
+
+        // Terminal Failure: retries exhausted or non-retryable error
+        if (attemptsMade >= maxAttempts || isNonRetryable) {
+          const reservedCost = job?.data?.costDeducted || 0;
+          if (reservedCost > 0 && job?.data?.fingerprint) {
+            try {
+              await keyStore.refundCredits(
+                job.data.fingerprint,
+                reservedCost,
+                `refund-${job.id}`,
+                `Refund for terminal BullMQ job failure ${job.id}: ${err.message}`
+              );
+            } catch (refundErr) {
+              console.error(`[BullMQ Worker] Failed to refund ${reservedCost} credits for job ${job?.id}:`, refundErr);
+            }
+          }
+        }
+
+        this.emit("job:failed", { jobId: job?.id, error: err?.message });
       });
     } catch (err) {
       console.warn("[QueueWorker] BullMQ Worker initialization failed. Falling back to in-memory mode.", err);

@@ -231,24 +231,42 @@ export async function POST(req: NextRequest) {
   }
 
   // 2. Enqueue Job into Resilient Task Queue with pre-reserved credit status
-  const jobRecord = await jobQueue.addJob(
-    {
-      id: jobId,
-      fingerprint: agentKey.fingerprint,
-      agentName: agentKey.agentName,
-      toolName,
-      toolArgs,
-      cost,
-      costDeducted: cost,
-      returnType,
-      priority: requestedPriority,
-      maxRetries
-    },
-    {
-      priority: requestedPriority,
-      maxRetries
+  let jobRecord;
+  try {
+    jobRecord = await jobQueue.addJob(
+      {
+        id: jobId,
+        fingerprint: agentKey.fingerprint,
+        agentName: agentKey.agentName,
+        toolName,
+        toolArgs,
+        cost,
+        costDeducted: cost,
+        returnType,
+        priority: requestedPriority,
+        maxRetries
+      },
+      {
+        priority: requestedPriority,
+        maxRetries
+      }
+    );
+  } catch (enqueueErr: any) {
+    // If enqueue fails, immediately refund pre-reserved credits!
+    if (cost > 0) {
+      try {
+        await keyStore.refundCredits(
+          fingerprint,
+          cost,
+          `refund-enqueue-${jobId}`,
+          `Refund for enqueue failure: ${enqueueErr.message}`
+        );
+      } catch (refundErr) {
+        console.error(`[JobsRoute] Failed to refund ${cost} credits on enqueue failure:`, refundErr);
+      }
     }
-  );
+    throw enqueueErr;
+  }
 
   const latency = Math.round(performance.now() - startTime);
   await telemetryStore.addLog({

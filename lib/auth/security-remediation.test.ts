@@ -444,3 +444,73 @@ test("sec-remediation: maxRetries is strictly capped to system limit (3) to prev
   assert.ok(job);
   assert.equal(job.maxRetries, 3, "maxRetries must be clamped to system maximum (3)");
 });
+
+test("sec-remediation: enqueue failure automatically refunds reserved credits without losing user balance", async () => {
+  const keypair = generateAgentKeypair("ed25519");
+  const agent = await keyStore.registerKey({
+    agentName: "Queue Crash Agent",
+    publicKeyPem: keypair.publicKeyPem,
+    initialCredits: 10
+  });
+
+  const payloadBody = JSON.stringify({
+    tool: "grayscale_image",
+    arguments: {
+      image_base64: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    }
+  });
+
+  // Mock jobQueue.addJob to simulate a transient queue / Redis failure
+  const origAddJob = jobQueue.addJob.bind(jobQueue);
+  jobQueue.addJob = async () => {
+    throw new Error("Redis cluster connection timeout");
+  };
+
+  try {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const nonce = `crash-queue-nonce-${Math.random().toString(36).substring(2, 9)}`;
+    const signature = signRequestPayload({
+      privateKeyPem: keypair.privateKeyPem,
+      method: "POST",
+      path: "/api/mcp/jobs",
+      timestamp,
+      nonce,
+      body: payloadBody
+    });
+
+    const req = new NextRequest("http://localhost:3000/api/mcp/jobs", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-agent-key-fingerprint": agent.fingerprint,
+        "x-agent-timestamp": timestamp,
+        "x-agent-nonce": nonce,
+        "x-agent-signature": signature
+      },
+      body: payloadBody
+    });
+
+    await assert.rejects(
+      async () => {
+        await jobsPostHandler(req);
+      },
+      /Redis cluster connection timeout/
+    );
+
+    // Verify Invariant: The 1 credit was auto-refunded, keeping balance at 10
+    const keyAfter = await keyStore.findKeyByFingerprint(agent.fingerprint);
+    assert.equal(keyAfter?.creditsBalance, 10, "Credits must be refunded upon enqueue failure");
+  } finally {
+    jobQueue.addJob = origAddJob;
+  }
+});
+
+test("sec-remediation: validateSafeRemoteUrl enforces DNS timeout on non-resolving hosts", async () => {
+  await assert.rejects(
+    async () => {
+      // 1ms timeout to immediately trigger DNS timeout
+      await validateSafeRemoteUrl("http://some-very-slow-unresolvable-domain-test.org/image.png", 1);
+    },
+    /timed out/
+  );
+});

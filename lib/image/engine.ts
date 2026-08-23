@@ -74,9 +74,29 @@ export function isPrivateOrBlockedIp(ip: string): boolean {
 }
 
 /**
- * Validates that a remote URL is safe from SSRF attacks by resolving DNS and blocking private subnets
+ * Resolves DNS records with a strict timeout guard to prevent slow-DNS stalls
  */
-export async function validateSafeRemoteUrl(urlString: string): Promise<URL> {
+function resolveDnsWithTimeout(
+  hostname: string,
+  timeoutMs: number = 3000
+): Promise<dns.LookupAddress[]> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`DNS resolution timed out after ${Math.round(timeoutMs / 1000)}s for '${hostname}'`));
+    }, timeoutMs);
+
+    dns.lookup(hostname, { all: true }, (err, addresses) => {
+      clearTimeout(timer);
+      if (err) return reject(err);
+      resolve(addresses || []);
+    });
+  });
+}
+
+/**
+ * Validates that a remote URL is safe from SSRF attacks by resolving DNS with timeout and blocking private subnets
+ */
+export async function validateSafeRemoteUrl(urlString: string, timeoutMs: number = 3000): Promise<URL> {
   let parsed: URL;
   try {
     parsed = new URL(urlString);
@@ -102,9 +122,9 @@ export async function validateSafeRemoteUrl(urlString: string): Promise<URL> {
     throw new Error(`SSRF Violation: Hostname '${hostname}' is a restricted private or metadata host.`);
   }
 
-  // Preflight DNS resolution to check resolved IP addresses against private subnets
+  // Preflight DNS resolution to check resolved IP addresses against private subnets with timeout
   try {
-    const records = await dns.promises.lookup(hostname, { all: true });
+    const records = await resolveDnsWithTimeout(hostname, timeoutMs);
     if (!records || records.length === 0) {
       throw new Error(`DNS resolution failed for hostname '${hostname}'`);
     }
@@ -117,7 +137,7 @@ export async function validateSafeRemoteUrl(urlString: string): Promise<URL> {
       }
     }
   } catch (err: any) {
-    if (err.message?.includes("SSRF Violation")) {
+    if (err.message?.includes("SSRF Violation") || err.message?.includes("timed out")) {
       throw err;
     }
     // If DNS resolution fails, reject the URL
@@ -152,7 +172,18 @@ function secureDnsLookup(
     return callback(new Error(`SSRF Violation: Hostname '${hostname}' is a restricted private or metadata host.`));
   }
 
+  let isHandled = false;
+  const dnsTimer = setTimeout(() => {
+    if (isHandled) return;
+    isHandled = true;
+    callback(new Error(`DNS resolution timed out for '${hostname}'`));
+  }, 3000);
+
   dns.lookup(hostname, { all: true }, (err, addresses) => {
+    if (isHandled) return;
+    isHandled = true;
+    clearTimeout(dnsTimer);
+
     if (err) return callback(err);
     if (!addresses || addresses.length === 0) {
       return callback(new Error(`DNS resolution failed for hostname '${hostname}'`));
@@ -322,7 +353,8 @@ export async function fetchSafeRemoteImage(
       throw new Error(`Remote image fetch timed out: exceeded total ${Math.round(overallTimeoutMs / 1000)}s deadline across redirects (${currentUrl})`);
     }
 
-    const parsed = await validateSafeRemoteUrl(currentUrl);
+    const dnsTimeout = Math.min(3000, remainingMs);
+    const parsed = await validateSafeRemoteUrl(currentUrl, dnsTimeout);
     const result = await makePinnedHttpRequest(parsed, maxSizeBytes, remainingMs);
 
     // Handle Redirects with per-hop validation

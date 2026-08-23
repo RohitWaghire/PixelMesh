@@ -303,19 +303,36 @@ export async function POST(req: NextRequest) {
         asyncCreditsRemaining = deduction.remaining;
       }
 
-      const jobRecord = await jobQueue.addJob({ 
-        id: asyncJobId,
-        fingerprint: agentKey.fingerprint,
-        agentName: agentKey.agentName,
-        toolName,
-        toolArgs,
-        cost,
-        costDeducted: cost,
-        returnType,
-        priority: requestedPriority
-      }, {
-        priority: requestedPriority
-      });
+      let jobRecord;
+      try {
+        jobRecord = await jobQueue.addJob({ 
+          id: asyncJobId,
+          fingerprint: agentKey.fingerprint,
+          agentName: agentKey.agentName,
+          toolName,
+          toolArgs,
+          cost,
+          costDeducted: cost,
+          returnType,
+          priority: requestedPriority
+        }, {
+          priority: requestedPriority
+        });
+      } catch (enqueueErr: any) {
+        if (cost > 0) {
+          try {
+            await keyStore.refundCredits(
+              fingerprint,
+              cost,
+              `refund-enqueue-${asyncJobId}`,
+              `Refund for enqueue failure: ${enqueueErr.message}`
+            );
+          } catch (refundErr) {
+            console.error(`[McpRoute] Failed to refund ${cost} credits on enqueue failure:`, refundErr);
+          }
+        }
+        throw enqueueErr;
+      }
 
       const pollUrl = `/api/mcp/jobs/${jobRecord.id}`;
       const streamUrl = `/api/mcp/jobs/${jobRecord.id}/stream`;

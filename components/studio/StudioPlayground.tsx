@@ -536,9 +536,13 @@ export default function StudioPlayground() {
           originalImage={originalImage}
           processedImage={processedImage}
           sliderPos={sliderPos}
-          setSliderPos={setSliderPos}
+          setSliderPos={(pos) => adapter.setSlider(pos)}
           zoom={zoom}
-          setZoom={setZoom}
+          setZoom={(value) => {
+            const current = mutationCoordinator.getState();
+            const nextZoom = typeof value === "function" ? value(current.zoom) : value;
+            adapter.setSlider(current.sliderPos, nextZoom);
+          }}
           loading={loading}
           metadata={metadata}
           executionTimeMs={executionTimeMs}

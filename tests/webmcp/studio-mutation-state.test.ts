@@ -129,3 +129,32 @@ test("pipeline composition preserves the active canvas image and prior steps", (
     { tool: "contrast", params: { amount: 2 } },
   ]);
 });
+
+test("undo invalidates an in-flight mutation so its stale result cannot overwrite the restored canvas", async () => {
+  const coordinator = new StudioCanvasMutationCoordinator(initialState);
+  await coordinator.enqueue(async () => ({
+    state: resultState(coordinator, "image-1", "brightness"),
+    result: "image-1",
+  }));
+
+  let releaseSecond!: () => void;
+  const secondFinished = new Promise<void>((resolve) => {
+    releaseSecond = resolve;
+  });
+  const inFlight = coordinator.enqueue(async () => {
+    await secondFinished;
+    return {
+      state: resultState(coordinator, "stale-image-2", "contrast"),
+      result: "stale-image-2",
+    };
+  });
+
+  const undo = coordinator.undo("undo_last");
+  assert.equal(undo.state.processedImage, null);
+
+  releaseSecond();
+  await inFlight;
+
+  assert.equal(coordinator.getState().processedImage, null);
+  assert.equal(coordinator.getState().pipelineSteps.length, 0);
+});

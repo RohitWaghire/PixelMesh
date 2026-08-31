@@ -70,6 +70,7 @@ export class StudioCanvasMutationCoordinator {
   private baseline: StudioCanvasState;
   private history: StudioCanvasState[] = [];
   private queue: Promise<void> = Promise.resolve();
+  private generation = 0;
 
   constructor(initialState: StudioCanvasState) {
     this.current = cloneState(initialState);
@@ -86,10 +87,15 @@ export class StudioCanvasMutationCoordinator {
   }
 
   reset(nextState: StudioCanvasState): StudioCanvasState {
+    this.generation += 1;
+    this.applyReset(nextState);
+    return this.getState();
+  }
+
+  private applyReset(nextState: StudioCanvasState): void {
     this.current = cloneState(nextState);
     this.baseline = cloneState(nextState);
     this.history = [];
-    return this.getState();
   }
 
   enqueueReset(nextState: StudioCanvasState): Promise<void> {
@@ -103,10 +109,14 @@ export class StudioCanvasMutationCoordinator {
     mutation: () => Promise<CommittedMutation<T>>,
     options: StudioCanvasMutationOptions = {},
   ): Promise<T> {
+    const generationAtSchedule = this.generation;
     const run = this.queue.then(async () => {
       const committed = await mutation();
+      if (generationAtSchedule !== this.generation) {
+        return committed.result;
+      }
       if (options.resetHistory) {
-        this.reset(committed.state);
+        this.applyReset(committed.state);
       } else {
         this.current = cloneState(committed.state);
         this.history.push(this.getState());
@@ -124,6 +134,7 @@ export class StudioCanvasMutationCoordinator {
   }
 
   undo(action: "undo_last" | "reset_all"): StudioCanvasUndoResult {
+    this.generation += 1;
     if (action === "reset_all") {
       this.history = [];
       this.current = cloneState(this.baseline);

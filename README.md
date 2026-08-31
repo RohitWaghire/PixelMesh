@@ -273,7 +273,7 @@ Open [http://localhost:3000](http://localhost:3000) to view the Web Studio & Das
 ### Run Automated Tests
 ```bash
 # Run unit & E2E integration test suite
-npx tsx --test lib/**/*.test.ts
+npm test
 ```
 
 ### Build for Production

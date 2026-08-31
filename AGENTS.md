@@ -27,5 +27,5 @@ PixelMesh is an AI Agent-First image tool mesh and cryptographic WebMCP gateway 
 
 ### Context Pointers
 - **Domain Terminology**: See [CONTEXT.md](file:///d:/Antigravity/Web%20MCP%20App/CONTEXT.md).
-- **Project Status & Roadmap**: See [PROJECT_STATUS_AND_ROADMAP.md](file:///d:/Antigravity/Web%20MCP%20App/PROJECT_STATUS_AND_ROADMAP.md).
+- **Project Status & Roadmap**: See [docs/roadmap.md](file:///d:/Antigravity/Web%20MCP%20App/docs/roadmap.md).
 

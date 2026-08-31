@@ -11,7 +11,6 @@ import { LocalStorageAdapter } from "./local-adapter";
 import { S3StorageAdapter } from "./s3-adapter";
 
 declare global {
-  // eslint-disable-next-line no-var
   var __pixelmesh_storage__: StorageAdapter | undefined;
 }
 

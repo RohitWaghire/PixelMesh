@@ -4,6 +4,7 @@ import { keyStore } from "@/lib/auth/key-store";
 import { verifyRequestSignature } from "@/lib/auth/agent-crypto";
 import { nonceCache } from "@/lib/auth/nonce-cache";
 import { MCP_IMAGE_TOOLS } from "@/lib/mcp/tool-schemas";
+import { canCallTool, declaredInputBytes, hasImageInput as hasMcpImageInput, toolCost } from "@/lib/mcp/tool-policy";
 import { processSingleFilter, processPipeline, resolveInputImage } from "@/lib/image/engine";
 import { jobQueue, inferJobPriority } from "@/lib/queue/job-queue";
 import { telemetryStore } from "@/lib/telemetry/store";
@@ -184,10 +185,7 @@ export async function POST(req: NextRequest) {
 
     // Validate Key Scopes
     const allowedScopes = agentKey.scopes || ["all-tools"];
-    const hasPermission = allowedScopes.includes("all-tools") ||
-      allowedScopes.includes(toolName) ||
-      (allowedScopes.includes("filters;*") && toolName !== "export_image") ||
-      (allowedScopes.includes("geometry:*") && ["crop_image", "circle_crop", "flip_image", "rotate_image", "straighten_photo"].includes(toolName));
+    const hasPermission = canCallTool(allowedScopes, toolName);
 
     if (!hasPermission) {
       await telemetryStore.addLog({
@@ -218,11 +216,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Determine Cost per ADR 0005
-    const isHighRes = Boolean(
-      (toolArgs.image_base64 && toolArgs.image_base64.length > 20 * 1024 * 1024) ||
-      (toolArgs.size_bytes && toolArgs.size_bytes > 20 * 1024 * 1024)
-    );
-    const cost = toolName === "get_image_metadata" ? 0 : isHighRes ? 5 : toolName === "batch_filter_pipeline" ? 3 : 1;
+    const cost = toolCost(toolName, declaredInputBytes(toolArgs));
 
 
     // Check Credit Balance
@@ -379,7 +373,7 @@ export async function POST(req: NextRequest) {
     // Synchronous Execution Flow
     try {
       let filterResult: any;
-      const hasImageInput = Boolean(toolArgs.image_base64 || toolArgs.image_key || toolArgs.image_url);
+      const hasImageInput = hasMcpImageInput(toolArgs);
 
       if (toolName === "get_image_metadata") {
         if (!hasImageInput) {
@@ -463,8 +457,7 @@ export async function POST(req: NextRequest) {
 
       // Reconcile Cost dynamically based on resolved input image size (ADR 0005)
       const inputBytes = filterResult.inputSizeBytes || (toolArgs.image_base64 ? Math.round(toolArgs.image_base64.length * 0.75) : 0);
-      const isActualHighRes = inputBytes > 20 * 1024 * 1024;
-      const actualCost = toolName === "get_image_metadata" ? 0 : isActualHighRes ? 5 : toolName === "batch_filter_pipeline" ? 3 : 1;
+      const actualCost = toolCost(toolName, inputBytes);
 
       // Deduct Credits ONLY after successful execution
       const deduction = await keyStore.deductCredits(fingerprint, actualCost, undefined, toolName);

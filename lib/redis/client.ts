@@ -268,9 +268,7 @@ export class IORedisClientAdapter implements RedisClientInterface {
 // ============================================================================
 
 declare global {
-  // eslint-disable-next-line no-var
   var __pixelmesh_redis__: RedisClientInterface | undefined;
-  // eslint-disable-next-line no-var
   var __pixelmesh_redis_backend__: RedisBackendType | undefined;
 }
 

@@ -744,7 +744,6 @@ export class BullMQJobQueueAdapter extends EventEmitter implements JobQueueInter
 export type JobQueue = InMemoryJobQueue | BullMQJobQueueAdapter;
 
 declare global {
-  // eslint-disable-next-line no-var
   var __pixelmesh_queue__: JobQueue | undefined;
 }
 

@@ -683,7 +683,6 @@ export function createWorker(options?: WorkerOptions): QueueWorker {
 }
 
 declare global {
-  // eslint-disable-next-line no-var
   var __pixelmesh_worker__: QueueWorker | undefined;
 }
 

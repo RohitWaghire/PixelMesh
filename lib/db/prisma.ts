@@ -875,9 +875,7 @@ export class InMemoryPrismaClient implements PrismaClientLike {
 // ============================================================================
 
 declare global {
-  // eslint-disable-next-line no-var
   var __pixelmesh_prisma__: PrismaClientLike | undefined;
-  // eslint-disable-next-line no-var
   var __pixelmesh_is_mock_db__: boolean | undefined;
 }
 

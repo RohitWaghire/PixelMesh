@@ -13,6 +13,7 @@ interface CanvasViewportProps {
   loading: boolean;
   metadata?: any;
   executionTimeMs?: number;
+  children?: React.ReactNode;
 }
 
 export default function CanvasViewport({
@@ -25,6 +26,7 @@ export default function CanvasViewport({
   loading,
   metadata,
   executionTimeMs,
+  children,
 }: CanvasViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -161,6 +163,8 @@ export default function CanvasViewport({
           </div>
         )}
       </div>
+
+      {children}
     </div>
   );
 }

@@ -1,26 +1,38 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import ToolSidebar from "./ToolSidebar";
 import CanvasViewport from "./CanvasViewport";
 import ParameterInspector from "./ParameterInspector";
+import AgentActivityHUD from "./AgentActivityHUD";
+import WebMCPSimulatorDrawer from "./WebMCPSimulatorDrawer";
+import DeclarativeWebMCPForms from "./DeclarativeWebMCPForms";
 import { FILTER_TOOLS_CATALOG, FilterToolDef } from "@/lib/image/tools-catalog";
-import { Upload, Image as ImageIcon, Sparkles, Check, Trash2, ArrowRight } from "lucide-react";
+import { useWebMCP } from "@/lib/webmcp/use-webmcp";
+import type {
+  StudioCanvasAdapter,
+  StudioProcessResult,
+  StudioCropResult,
+  StudioUndoResult,
+  StudioExportResult,
+} from "@/lib/webmcp/tools";
+import { WebMCPValidationError, WebMCPExecutionError } from "@/lib/webmcp/types";
+import { Upload, Trash2, ArrowRight } from "lucide-react";
 
 // Clean High-Quality Sample Photography (Portrait, Neon City, Mountain Landscape)
 const SAMPLE_IMAGES = [
   {
     name: "Neon Cyberpunk Portrait",
-    url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=800&auto=format&fit=crop&q=80"
+    url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=800&auto=format&fit=crop&q=80",
   },
   {
     name: "Golden Hour Landscape",
-    url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&auto=format&fit=crop&q=80"
+    url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&auto=format&fit=crop&q=80",
   },
   {
     name: "Architectural Studio",
-    url: "https://images.unsplash.com/photo-1513694203232-719a280e022f?w=800&auto=format&fit=crop&q=80"
-  }
+    url: "https://images.unsplash.com/photo-1513694203232-719a280e022f?w=800&auto=format&fit=crop&q=80",
+  },
 ];
 
 export default function StudioPlayground() {
@@ -37,6 +49,29 @@ export default function StudioPlayground() {
   const [keys, setKeys] = useState<any[]>([]);
   const [activeKeyFingerprint, setActiveKeyFingerprint] = useState<string>("");
 
+  // Ref tracking for latest state to support synchronous access
+  const stateRef = useRef({
+    originalImage,
+    processedImage,
+    sliderPos,
+    zoom,
+    metadata,
+    pipelineSteps,
+    activeKeyFingerprint,
+  });
+
+  useEffect(() => {
+    stateRef.current = {
+      originalImage,
+      processedImage,
+      sliderPos,
+      zoom,
+      metadata,
+      pipelineSteps,
+      activeKeyFingerprint,
+    };
+  }, [originalImage, processedImage, sliderPos, zoom, metadata, pipelineSteps, activeKeyFingerprint]);
+
   // Load registered keys & default image
   useEffect(() => {
     fetch("/api/auth/keys")
@@ -46,26 +81,38 @@ export default function StudioPlayground() {
         if (data.keys?.[0]) {
           setActiveKeyFingerprint(data.keys[0].fingerprint);
         }
+      })
+      .catch((err) => {
+        console.warn("Failed fetching agent keys:", err);
       });
 
     loadSampleImage(SAMPLE_IMAGES[0].url);
   }, []);
 
-  const loadSampleImage = async (url: string) => {
+  const loadSampleImage = async (url: string, signal?: AbortSignal) => {
     try {
       setLoading(true);
-      const res = await fetch(url);
+      const res = await fetch(url, { signal });
       const blob = await res.blob();
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64 = reader.result as string;
-        setOriginalImage(base64);
-        setProcessedImage(null);
-        setPipelineSteps([]);
-      };
-      reader.readAsDataURL(blob);
-    } catch (err) {
-      console.error("Failed to load sample image:", err);
+      await new Promise<void>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64 = reader.result as string;
+          setOriginalImage(base64);
+          setProcessedImage(null);
+          setPipelineSteps([]);
+          setSliderPos(50);
+          setZoom(1);
+          resolve();
+        };
+        reader.onerror = () => reject(new Error("Failed reading sample image"));
+        reader.readAsDataURL(blob);
+      });
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        console.error("Failed to load sample image:", err);
+      }
+      throw err;
     } finally {
       setLoading(false);
     }
@@ -81,6 +128,8 @@ export default function StudioPlayground() {
       setOriginalImage(base64);
       setProcessedImage(null);
       setPipelineSteps([]);
+      setSliderPos(50);
+      setZoom(1);
     };
     reader.readAsDataURL(file);
   };
@@ -90,46 +139,274 @@ export default function StudioPlayground() {
     setToolParams(tool.defaultParams);
   };
 
+  // Construct StudioCanvasAdapter
+  const adapter: StudioCanvasAdapter = useMemo(
+    () => ({
+      getImage: () => stateRef.current.processedImage || stateRef.current.originalImage,
+      getOriginalImage: () => stateRef.current.originalImage,
+      getMetadata: () => stateRef.current.metadata,
+      getPipelineSteps: () => stateRef.current.pipelineSteps,
+      getSliderPos: () => stateRef.current.sliderPos,
+      getZoom: () => stateRef.current.zoom,
+
+      applyFilter: async (toolId: string, params: Record<string, any>, signal?: AbortSignal): Promise<StudioProcessResult> => {
+        const currentInput = stateRef.current.processedImage || stateRef.current.originalImage;
+        if (!currentInput) {
+          throw new WebMCPValidationError("No image is currently loaded in the studio canvas", "image");
+        }
+
+        setLoading(true);
+        try {
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (stateRef.current.activeKeyFingerprint) {
+            headers["x-agent-key-fingerprint"] = stateRef.current.activeKeyFingerprint;
+          }
+
+          const res = await fetch("/api/studio/process", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              image_base64: currentInput,
+              tool: toolId,
+              params: params || {},
+            }),
+            signal,
+          });
+
+          const data = await res.json();
+          if (!res.ok || !data.success) {
+            throw new WebMCPExecutionError(data.error || "Filter execution failed", toolId);
+          }
+
+          setProcessedImage(data.result.imageBase64);
+          setMetadata(data.result.metadata);
+          setExecutionTimeMs(data.result.executionTimeMs);
+          setPipelineSteps((prev) => [...prev, { tool: toolId, params: params || {} }]);
+
+          // Automatically sync sidebar and parameter inspector
+          const matchedTool = FILTER_TOOLS_CATALOG.find((t) => t.id === toolId);
+          if (matchedTool) {
+            setSelectedTool(matchedTool);
+            setToolParams(params || matchedTool.defaultParams);
+          }
+
+          return {
+            processedImage: data.result.imageBase64,
+            metadata: data.result.metadata,
+            executionTimeMs: data.result.executionTimeMs,
+          };
+        } finally {
+          setLoading(false);
+        }
+      },
+
+      cropImage: async (
+        left: number,
+        top: number,
+        width: number,
+        height: number,
+        signal?: AbortSignal
+      ): Promise<StudioCropResult> => {
+        const currentInput = stateRef.current.processedImage || stateRef.current.originalImage;
+        if (!currentInput) {
+          throw new WebMCPValidationError("No image is currently loaded in the studio canvas", "image");
+        }
+
+        setLoading(true);
+        try {
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (stateRef.current.activeKeyFingerprint) {
+            headers["x-agent-key-fingerprint"] = stateRef.current.activeKeyFingerprint;
+          }
+
+          const res = await fetch("/api/studio/process", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              image_base64: currentInput,
+              tool: "crop_image",
+              params: { left, top, width, height },
+            }),
+            signal,
+          });
+
+          const data = await res.json();
+          if (!res.ok || !data.success) {
+            throw new WebMCPExecutionError(data.error || "Crop execution failed", "crop_canvas");
+          }
+
+          setProcessedImage(data.result.imageBase64);
+          setMetadata(data.result.metadata);
+          setExecutionTimeMs(data.result.executionTimeMs);
+          setPipelineSteps((prev) => [
+            ...prev,
+            { tool: "crop_image", params: { left, top, width, height } },
+          ]);
+
+          return {
+            processedImage: data.result.imageBase64,
+            metadata: data.result.metadata,
+            executionTimeMs: data.result.executionTimeMs,
+          };
+        } finally {
+          setLoading(false);
+        }
+      },
+
+      buildPipeline: async (
+        operations: Array<{ tool: string; params?: any }>,
+        signal?: AbortSignal
+      ): Promise<StudioProcessResult> => {
+        const currentInput = stateRef.current.originalImage || stateRef.current.processedImage;
+        if (!currentInput) {
+          throw new WebMCPValidationError("No image is currently loaded in the studio canvas", "image");
+        }
+
+        setLoading(true);
+        try {
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (stateRef.current.activeKeyFingerprint) {
+            headers["x-agent-key-fingerprint"] = stateRef.current.activeKeyFingerprint;
+          }
+
+          const res = await fetch("/api/studio/process", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              image_base64: currentInput,
+              operations,
+            }),
+            signal,
+          });
+
+          const data = await res.json();
+          if (!res.ok || !data.success) {
+            throw new WebMCPExecutionError(
+              data.error || "Pipeline execution failed",
+              "build_filter_pipeline"
+            );
+          }
+
+          setProcessedImage(data.result.imageBase64);
+          setMetadata(data.result.metadata);
+          setExecutionTimeMs(data.result.executionTimeMs);
+          setPipelineSteps(operations.map((op) => ({ tool: op.tool, params: op.params || {} })));
+
+          return {
+            processedImage: data.result.imageBase64,
+            metadata: data.result.metadata,
+            executionTimeMs: data.result.executionTimeMs,
+          };
+        } finally {
+          setLoading(false);
+        }
+      },
+
+      loadPreset: async (presetIndex?: number, imageUrl?: string, signal?: AbortSignal): Promise<void> => {
+        let targetUrl = "";
+        if (presetIndex !== undefined && SAMPLE_IMAGES[presetIndex]) {
+          targetUrl = SAMPLE_IMAGES[presetIndex].url;
+        } else if (imageUrl) {
+          targetUrl = imageUrl;
+        } else {
+          throw new WebMCPValidationError(
+            "Either a valid preset_index (0-2) or image_url must be provided",
+            "load_preset_image"
+          );
+        }
+
+        await loadSampleImage(targetUrl, signal);
+      },
+
+      setSlider: (pos: number, zoomLevel?: number) => {
+        setSliderPos(pos);
+        if (zoomLevel !== undefined) {
+          setZoom(zoomLevel);
+        }
+      },
+
+      undoAction: (action: "undo_last" | "reset_all"): StudioUndoResult => {
+        if (action === "reset_all") {
+          setProcessedImage(null);
+          setPipelineSteps([]);
+          return {
+            remainingSteps: 0,
+            restored: true,
+            activeImage: stateRef.current.originalImage,
+          };
+        }
+
+        // undo_last
+        const currentSteps = stateRef.current.pipelineSteps;
+        if (currentSteps.length <= 1) {
+          setProcessedImage(null);
+          setPipelineSteps([]);
+          return {
+            remainingSteps: 0,
+            restored: true,
+            activeImage: stateRef.current.originalImage,
+          };
+        }
+
+        const remaining = currentSteps.slice(0, -1);
+        setPipelineSteps(remaining);
+        // Note: active canvas reverts to previous step
+        return {
+          remainingSteps: remaining.length,
+          restored: true,
+        };
+      },
+
+      exportImage: async (format = "png", quality = 90): Promise<StudioExportResult> => {
+        const active = stateRef.current.processedImage || stateRef.current.originalImage;
+        if (!active) {
+          throw new WebMCPValidationError("No image is currently loaded to export", "image");
+        }
+
+        const sizeBytes = Math.round(active.length * 0.75);
+        return {
+          imageBase64: active,
+          format,
+          sizeBytes,
+          width: stateRef.current.metadata?.width,
+          height: stateRef.current.metadata?.height,
+        };
+      },
+    }),
+    []
+  );
+
+  // Bind WebMCP React Lifecycle Hook
+  const {
+    tools,
+    activeCall,
+    executionHistory,
+    isNative,
+    isSimulating,
+    simulateAgentCall,
+    clearHistory,
+  } = useWebMCP(adapter);
+
   const handleApplyFilter = async () => {
     if (!originalImage) return;
 
     try {
-      setLoading(true);
-      const currentInput = processedImage || originalImage;
-
-      const res = await fetch("/api/studio/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image_base64: currentInput,
-          tool: selectedTool.id,
-          params: toolParams
-        })
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        setProcessedImage(data.result.imageBase64);
-        setMetadata(data.result.metadata);
-        setExecutionTimeMs(data.result.executionTimeMs);
-        setPipelineSteps((prev) => [...prev, { tool: selectedTool.name, params: toolParams }]);
-      } else {
-        alert(data.error || "Filter failed to apply");
-      }
-    } catch (err) {
+      await adapter.applyFilter(selectedTool.id, toolParams);
+    } catch (err: any) {
       console.error("Error executing filter:", err);
-    } finally {
-      setLoading(false);
+      alert(err?.message || "Filter failed to apply");
     }
   };
 
   const handleResetToOriginal = () => {
-    setProcessedImage(null);
-    setPipelineSteps([]);
+    adapter.undoAction("reset_all");
   };
 
   return (
     <div className="space-y-4">
+      {/* Declarative WebMCP Semantic Forms */}
+      <DeclarativeWebMCPForms />
+
       {/* Quick Toolbar / Sample Selector */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-zinc-900/60 border border-zinc-800 rounded-xl p-3 backdrop-blur-sm">
         <div className="flex items-center gap-2">
@@ -187,7 +464,13 @@ export default function StudioPlayground() {
           loading={loading}
           metadata={metadata}
           executionTimeMs={executionTimeMs}
-        />
+        >
+          {/* Live Agent Activity HUD */}
+          <AgentActivityHUD
+            activeCall={activeCall}
+            lastRecord={executionHistory.length > 0 ? executionHistory[0] : null}
+          />
+        </CanvasViewport>
 
         <ParameterInspector
           selectedTool={selectedTool}
@@ -227,6 +510,16 @@ export default function StudioPlayground() {
           </button>
         </div>
       )}
+
+      {/* In-Browser WebMCP Simulator & DevTools Inspector Drawer */}
+      <WebMCPSimulatorDrawer
+        tools={tools}
+        history={executionHistory}
+        isNative={isNative}
+        isSimulating={isSimulating}
+        onSimulate={simulateAgentCall}
+        onClearHistory={clearHistory}
+      />
     </div>
   );
 }

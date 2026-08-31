@@ -40,6 +40,24 @@ function cloneState(state: StudioCanvasState): StudioCanvasState {
   };
 }
 
+export function composePipelineState(
+  current: StudioCanvasState,
+  result: Pick<StudioCanvasState, "processedImage" | "metadata" | "executionTimeMs">,
+  operations: Array<{ tool: string; params?: Record<string, any> }>,
+): StudioCanvasState {
+  return {
+    ...current,
+    ...result,
+    pipelineSteps: [
+      ...current.pipelineSteps,
+      ...operations.map((operation) => ({
+        tool: operation.tool,
+        params: { ...(operation.params || {}) },
+      })),
+    ],
+  };
+}
+
 /**
  * Coordinates Studio canvas state across asynchronous mutations.
  *
@@ -72,6 +90,13 @@ export class StudioCanvasMutationCoordinator {
     this.baseline = cloneState(nextState);
     this.history = [];
     return this.getState();
+  }
+
+  enqueueReset(nextState: StudioCanvasState): Promise<void> {
+    return this.enqueue(
+      async () => ({ state: nextState, result: undefined }),
+      { resetHistory: true },
+    );
   }
 
   enqueue<T>(

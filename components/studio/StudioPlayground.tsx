@@ -10,6 +10,7 @@ import DeclarativeWebMCPForms from "./DeclarativeWebMCPForms";
 import { FILTER_TOOLS_CATALOG, FilterToolDef } from "@/lib/image/tools-catalog";
 import { useWebMCP } from "@/lib/webmcp/use-webmcp";
 import {
+  composePipelineState,
   StudioCanvasMutationCoordinator,
   type StudioCanvasState,
 } from "@/lib/webmcp/studio-mutation-state";
@@ -97,8 +98,9 @@ export default function StudioPlayground() {
   };
 
   const resetCanvasState = (next: StudioCanvasState) => {
-    mutationCoordinator.reset(next);
-    syncCanvasState(next);
+    return mutationCoordinator.enqueueReset(next).then(() => {
+      syncCanvasState(mutationCoordinator.getState());
+    });
   };
 
   const enqueueCanvasMutation = <T,>(
@@ -142,24 +144,23 @@ export default function StudioPlayground() {
       setLoading(true);
       const res = await fetch(url, { signal });
       const blob = await res.blob();
-      await new Promise<void>((resolve, reject) => {
+      const base64 = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onloadend = () => {
-          const base64 = reader.result as string;
-          resetCanvasState({
-            ...mutationCoordinator.getState(),
-            originalImage: base64,
-            processedImage: null,
-            metadata: null,
-            executionTimeMs: undefined,
-            pipelineSteps: [],
-            sliderPos: 50,
-            zoom: 1,
-          });
-          resolve();
+          resolve(reader.result as string);
         };
         reader.onerror = () => reject(new Error("Failed reading sample image"));
         reader.readAsDataURL(blob);
+      });
+      await resetCanvasState({
+        ...mutationCoordinator.getState(),
+        originalImage: base64,
+        processedImage: null,
+        metadata: null,
+        executionTimeMs: undefined,
+        pipelineSteps: [],
+        sliderPos: 50,
+        zoom: 1,
       });
     } catch (err: any) {
       if (err?.name !== "AbortError") {
@@ -187,6 +188,8 @@ export default function StudioPlayground() {
         pipelineSteps: [],
         sliderPos: 50,
         zoom: 1,
+      }).catch((err) => {
+        console.error("Failed to reset canvas after upload:", err);
       });
     };
     reader.readAsDataURL(file);
@@ -340,7 +343,7 @@ export default function StudioPlayground() {
         try {
           const result = await enqueueCanvasMutation(async () => {
             const current = mutationCoordinator.getState();
-            const currentInput = current.originalImage || current.processedImage;
+            const currentInput = current.processedImage || current.originalImage;
             if (!currentInput) {
               throw new WebMCPValidationError("No image is currently loaded in the studio canvas", "image");
             }
@@ -368,13 +371,15 @@ export default function StudioPlayground() {
               );
             }
 
-            const nextState: StudioCanvasState = {
-              ...current,
-              processedImage: data.result.imageBase64,
-              metadata: data.result.metadata,
-              executionTimeMs: data.result.executionTimeMs,
-              pipelineSteps: operations.map((op) => ({ tool: op.tool, params: op.params || {} })),
-            };
+            const nextState = composePipelineState(
+              current,
+              {
+                processedImage: data.result.imageBase64,
+                metadata: data.result.metadata,
+                executionTimeMs: data.result.executionTimeMs,
+              },
+              operations,
+            );
 
             return {
               state: nextState,
@@ -405,13 +410,7 @@ export default function StudioPlayground() {
           );
         }
 
-        await enqueueCanvasMutation(
-          async () => {
-            await loadSampleImage(targetUrl, signal);
-            return { state: mutationCoordinator.getState(), result: undefined };
-          },
-          { resetHistory: true },
-        );
+        await loadSampleImage(targetUrl, signal);
       },
 
       setSlider: (pos: number, zoomLevel?: number) => {

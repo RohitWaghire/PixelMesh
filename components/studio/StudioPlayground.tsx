@@ -9,6 +9,10 @@ import WebMCPSimulatorDrawer from "./WebMCPSimulatorDrawer";
 import DeclarativeWebMCPForms from "./DeclarativeWebMCPForms";
 import { FILTER_TOOLS_CATALOG, FilterToolDef } from "@/lib/image/tools-catalog";
 import { useWebMCP } from "@/lib/webmcp/use-webmcp";
+import {
+  StudioCanvasMutationCoordinator,
+  type StudioCanvasState,
+} from "@/lib/webmcp/studio-mutation-state";
 import type {
   StudioCanvasAdapter,
   StudioProcessResult,
@@ -60,6 +64,48 @@ export default function StudioPlayground() {
     activeKeyFingerprint,
   });
 
+  const mutationCoordinatorRef = useRef(
+    new StudioCanvasMutationCoordinator({
+      originalImage,
+      processedImage,
+      sliderPos,
+      zoom,
+      metadata,
+      executionTimeMs,
+      pipelineSteps,
+    }),
+  );
+  const mutationCoordinator = mutationCoordinatorRef.current;
+
+  const syncCanvasState = (next: StudioCanvasState) => {
+    stateRef.current = {
+      ...stateRef.current,
+      originalImage: next.originalImage,
+      processedImage: next.processedImage,
+      sliderPos: next.sliderPos,
+      zoom: next.zoom,
+      metadata: next.metadata,
+      pipelineSteps: next.pipelineSteps,
+    };
+    setOriginalImage(next.originalImage);
+    setProcessedImage(next.processedImage);
+    setSliderPos(next.sliderPos);
+    setZoom(next.zoom);
+    setMetadata(next.metadata);
+    setExecutionTimeMs(next.executionTimeMs);
+    setPipelineSteps(next.pipelineSteps);
+  };
+
+  const resetCanvasState = (next: StudioCanvasState) => {
+    mutationCoordinator.reset(next);
+    syncCanvasState(next);
+  };
+
+  const enqueueCanvasMutation = <T,>(
+    mutation: () => Promise<{ state: StudioCanvasState; result: T }>,
+    options?: { resetHistory?: boolean },
+  ): Promise<T> => mutationCoordinator.enqueue(mutation, options);
+
   useEffect(() => {
     stateRef.current = {
       originalImage,
@@ -87,6 +133,8 @@ export default function StudioPlayground() {
       });
 
     loadSampleImage(SAMPLE_IMAGES[0].url);
+    // The initial sample and key lookup intentionally run once per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadSampleImage = async (url: string, signal?: AbortSignal) => {
@@ -98,11 +146,16 @@ export default function StudioPlayground() {
         const reader = new FileReader();
         reader.onloadend = () => {
           const base64 = reader.result as string;
-          setOriginalImage(base64);
-          setProcessedImage(null);
-          setPipelineSteps([]);
-          setSliderPos(50);
-          setZoom(1);
+          resetCanvasState({
+            ...mutationCoordinator.getState(),
+            originalImage: base64,
+            processedImage: null,
+            metadata: null,
+            executionTimeMs: undefined,
+            pipelineSteps: [],
+            sliderPos: 50,
+            zoom: 1,
+          });
           resolve();
         };
         reader.onerror = () => reject(new Error("Failed reading sample image"));
@@ -125,11 +178,16 @@ export default function StudioPlayground() {
     const reader = new FileReader();
     reader.onloadend = () => {
       const base64 = reader.result as string;
-      setOriginalImage(base64);
-      setProcessedImage(null);
-      setPipelineSteps([]);
-      setSliderPos(50);
-      setZoom(1);
+      resetCanvasState({
+        ...mutationCoordinator.getState(),
+        originalImage: base64,
+        processedImage: null,
+        metadata: null,
+        executionTimeMs: undefined,
+        pipelineSteps: [],
+        sliderPos: 50,
+        zoom: 1,
+      });
     };
     reader.readAsDataURL(file);
   };
@@ -142,59 +200,69 @@ export default function StudioPlayground() {
   // Construct StudioCanvasAdapter
   const adapter: StudioCanvasAdapter = useMemo(
     () => ({
-      getImage: () => stateRef.current.processedImage || stateRef.current.originalImage,
-      getOriginalImage: () => stateRef.current.originalImage,
-      getMetadata: () => stateRef.current.metadata,
-      getPipelineSteps: () => stateRef.current.pipelineSteps,
-      getSliderPos: () => stateRef.current.sliderPos,
-      getZoom: () => stateRef.current.zoom,
+      getImage: () => mutationCoordinator.getState().processedImage || mutationCoordinator.getState().originalImage,
+      getOriginalImage: () => mutationCoordinator.getState().originalImage,
+      getMetadata: () => mutationCoordinator.getState().metadata,
+      getPipelineSteps: () => mutationCoordinator.getState().pipelineSteps,
+      getSliderPos: () => mutationCoordinator.getState().sliderPos,
+      getZoom: () => mutationCoordinator.getState().zoom,
 
       applyFilter: async (toolId: string, params: Record<string, any>, signal?: AbortSignal): Promise<StudioProcessResult> => {
-        const currentInput = stateRef.current.processedImage || stateRef.current.originalImage;
-        if (!currentInput) {
-          throw new WebMCPValidationError("No image is currently loaded in the studio canvas", "image");
-        }
-
         setLoading(true);
         try {
-          const headers: Record<string, string> = { "Content-Type": "application/json" };
-          if (stateRef.current.activeKeyFingerprint) {
-            headers["x-agent-key-fingerprint"] = stateRef.current.activeKeyFingerprint;
-          }
+          const result = await enqueueCanvasMutation(async () => {
+            const current = mutationCoordinator.getState();
+            const currentInput = current.processedImage || current.originalImage;
+            if (!currentInput) {
+              throw new WebMCPValidationError("No image is currently loaded in the studio canvas", "image");
+            }
 
-          const res = await fetch("/api/studio/process", {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              image_base64: currentInput,
-              tool: toolId,
-              params: params || {},
-            }),
-            signal,
+            const headers: Record<string, string> = { "Content-Type": "application/json" };
+            if (stateRef.current.activeKeyFingerprint) {
+              headers["x-agent-key-fingerprint"] = stateRef.current.activeKeyFingerprint;
+            }
+
+            const res = await fetch("/api/studio/process", {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                image_base64: currentInput,
+                tool: toolId,
+                params: params || {},
+              }),
+              signal,
+            });
+
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+              throw new WebMCPExecutionError(data.error || "Filter execution failed", toolId);
+            }
+
+            const nextState: StudioCanvasState = {
+              ...current,
+              processedImage: data.result.imageBase64,
+              metadata: data.result.metadata,
+              executionTimeMs: data.result.executionTimeMs,
+              pipelineSteps: [...current.pipelineSteps, { tool: toolId, params: params || {} }],
+            };
+
+            const matchedTool = FILTER_TOOLS_CATALOG.find((t) => t.id === toolId);
+            if (matchedTool) {
+              setSelectedTool(matchedTool);
+              setToolParams(params || matchedTool.defaultParams);
+            }
+
+            return {
+              state: nextState,
+              result: {
+                processedImage: data.result.imageBase64,
+                metadata: data.result.metadata,
+                executionTimeMs: data.result.executionTimeMs,
+              },
+            };
           });
-
-          const data = await res.json();
-          if (!res.ok || !data.success) {
-            throw new WebMCPExecutionError(data.error || "Filter execution failed", toolId);
-          }
-
-          setProcessedImage(data.result.imageBase64);
-          setMetadata(data.result.metadata);
-          setExecutionTimeMs(data.result.executionTimeMs);
-          setPipelineSteps((prev) => [...prev, { tool: toolId, params: params || {} }]);
-
-          // Automatically sync sidebar and parameter inspector
-          const matchedTool = FILTER_TOOLS_CATALOG.find((t) => t.id === toolId);
-          if (matchedTool) {
-            setSelectedTool(matchedTool);
-            setToolParams(params || matchedTool.defaultParams);
-          }
-
-          return {
-            processedImage: data.result.imageBase64,
-            metadata: data.result.metadata,
-            executionTimeMs: data.result.executionTimeMs,
-          };
+          syncCanvasState(mutationCoordinator.getState());
+          return result;
         } finally {
           setLoading(false);
         }
@@ -207,47 +275,58 @@ export default function StudioPlayground() {
         height: number,
         signal?: AbortSignal
       ): Promise<StudioCropResult> => {
-        const currentInput = stateRef.current.processedImage || stateRef.current.originalImage;
-        if (!currentInput) {
-          throw new WebMCPValidationError("No image is currently loaded in the studio canvas", "image");
-        }
-
         setLoading(true);
         try {
-          const headers: Record<string, string> = { "Content-Type": "application/json" };
-          if (stateRef.current.activeKeyFingerprint) {
-            headers["x-agent-key-fingerprint"] = stateRef.current.activeKeyFingerprint;
-          }
+          const result = await enqueueCanvasMutation(async () => {
+            const current = mutationCoordinator.getState();
+            const currentInput = current.processedImage || current.originalImage;
+            if (!currentInput) {
+              throw new WebMCPValidationError("No image is currently loaded in the studio canvas", "image");
+            }
 
-          const res = await fetch("/api/studio/process", {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              image_base64: currentInput,
-              tool: "crop_image",
-              params: { left, top, width, height },
-            }),
-            signal,
+            const headers: Record<string, string> = { "Content-Type": "application/json" };
+            if (stateRef.current.activeKeyFingerprint) {
+              headers["x-agent-key-fingerprint"] = stateRef.current.activeKeyFingerprint;
+            }
+
+            const res = await fetch("/api/studio/process", {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                image_base64: currentInput,
+                tool: "crop_image",
+                params: { left, top, width, height },
+              }),
+              signal,
+            });
+
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+              throw new WebMCPExecutionError(data.error || "Crop execution failed", "crop_canvas");
+            }
+
+            const nextState: StudioCanvasState = {
+              ...current,
+              processedImage: data.result.imageBase64,
+              metadata: data.result.metadata,
+              executionTimeMs: data.result.executionTimeMs,
+              pipelineSteps: [
+                ...current.pipelineSteps,
+                { tool: "crop_image", params: { left, top, width, height } },
+              ],
+            };
+
+            return {
+              state: nextState,
+              result: {
+                processedImage: data.result.imageBase64,
+                metadata: data.result.metadata,
+                executionTimeMs: data.result.executionTimeMs,
+              },
+            };
           });
-
-          const data = await res.json();
-          if (!res.ok || !data.success) {
-            throw new WebMCPExecutionError(data.error || "Crop execution failed", "crop_canvas");
-          }
-
-          setProcessedImage(data.result.imageBase64);
-          setMetadata(data.result.metadata);
-          setExecutionTimeMs(data.result.executionTimeMs);
-          setPipelineSteps((prev) => [
-            ...prev,
-            { tool: "crop_image", params: { left, top, width, height } },
-          ]);
-
-          return {
-            processedImage: data.result.imageBase64,
-            metadata: data.result.metadata,
-            executionTimeMs: data.result.executionTimeMs,
-          };
+          syncCanvasState(mutationCoordinator.getState());
+          return result;
         } finally {
           setLoading(false);
         }
@@ -257,46 +336,57 @@ export default function StudioPlayground() {
         operations: Array<{ tool: string; params?: any }>,
         signal?: AbortSignal
       ): Promise<StudioProcessResult> => {
-        const currentInput = stateRef.current.originalImage || stateRef.current.processedImage;
-        if (!currentInput) {
-          throw new WebMCPValidationError("No image is currently loaded in the studio canvas", "image");
-        }
-
         setLoading(true);
         try {
-          const headers: Record<string, string> = { "Content-Type": "application/json" };
-          if (stateRef.current.activeKeyFingerprint) {
-            headers["x-agent-key-fingerprint"] = stateRef.current.activeKeyFingerprint;
-          }
+          const result = await enqueueCanvasMutation(async () => {
+            const current = mutationCoordinator.getState();
+            const currentInput = current.originalImage || current.processedImage;
+            if (!currentInput) {
+              throw new WebMCPValidationError("No image is currently loaded in the studio canvas", "image");
+            }
 
-          const res = await fetch("/api/studio/process", {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              image_base64: currentInput,
-              operations,
-            }),
-            signal,
+            const headers: Record<string, string> = { "Content-Type": "application/json" };
+            if (stateRef.current.activeKeyFingerprint) {
+              headers["x-agent-key-fingerprint"] = stateRef.current.activeKeyFingerprint;
+            }
+
+            const res = await fetch("/api/studio/process", {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                image_base64: currentInput,
+                operations,
+              }),
+              signal,
+            });
+
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+              throw new WebMCPExecutionError(
+                data.error || "Pipeline execution failed",
+                "build_filter_pipeline"
+              );
+            }
+
+            const nextState: StudioCanvasState = {
+              ...current,
+              processedImage: data.result.imageBase64,
+              metadata: data.result.metadata,
+              executionTimeMs: data.result.executionTimeMs,
+              pipelineSteps: operations.map((op) => ({ tool: op.tool, params: op.params || {} })),
+            };
+
+            return {
+              state: nextState,
+              result: {
+                processedImage: data.result.imageBase64,
+                metadata: data.result.metadata,
+                executionTimeMs: data.result.executionTimeMs,
+              },
+            };
           });
-
-          const data = await res.json();
-          if (!res.ok || !data.success) {
-            throw new WebMCPExecutionError(
-              data.error || "Pipeline execution failed",
-              "build_filter_pipeline"
-            );
-          }
-
-          setProcessedImage(data.result.imageBase64);
-          setMetadata(data.result.metadata);
-          setExecutionTimeMs(data.result.executionTimeMs);
-          setPipelineSteps(operations.map((op) => ({ tool: op.tool, params: op.params || {} })));
-
-          return {
-            processedImage: data.result.imageBase64,
-            metadata: data.result.metadata,
-            executionTimeMs: data.result.executionTimeMs,
-          };
+          syncCanvasState(mutationCoordinator.getState());
+          return result;
         } finally {
           setLoading(false);
         }
@@ -315,50 +405,37 @@ export default function StudioPlayground() {
           );
         }
 
-        await loadSampleImage(targetUrl, signal);
+        await enqueueCanvasMutation(
+          async () => {
+            await loadSampleImage(targetUrl, signal);
+            return { state: mutationCoordinator.getState(), result: undefined };
+          },
+          { resetHistory: true },
+        );
       },
 
       setSlider: (pos: number, zoomLevel?: number) => {
-        setSliderPos(pos);
-        if (zoomLevel !== undefined) {
-          setZoom(zoomLevel);
-        }
+        const current = mutationCoordinator.getState();
+        const next = mutationCoordinator.update({
+          sliderPos: pos,
+          zoom: zoomLevel === undefined ? current.zoom : zoomLevel,
+        });
+        syncCanvasState(next);
       },
 
       undoAction: (action: "undo_last" | "reset_all"): StudioUndoResult => {
-        if (action === "reset_all") {
-          setProcessedImage(null);
-          setPipelineSteps([]);
-          return {
-            remainingSteps: 0,
-            restored: true,
-            activeImage: stateRef.current.originalImage,
-          };
-        }
-
-        // undo_last
-        const currentSteps = stateRef.current.pipelineSteps;
-        if (currentSteps.length <= 1) {
-          setProcessedImage(null);
-          setPipelineSteps([]);
-          return {
-            remainingSteps: 0,
-            restored: true,
-            activeImage: stateRef.current.originalImage,
-          };
-        }
-
-        const remaining = currentSteps.slice(0, -1);
-        setPipelineSteps(remaining);
-        // Note: active canvas reverts to previous step
+        const undo = mutationCoordinator.undo(action);
+        syncCanvasState(undo.state);
         return {
-          remainingSteps: remaining.length,
-          restored: true,
+          remainingSteps: undo.remainingSteps,
+          restored: undo.restored,
+          activeImage: undo.state.processedImage || undo.state.originalImage,
         };
       },
 
       exportImage: async (format = "png", quality = 90): Promise<StudioExportResult> => {
-        const active = stateRef.current.processedImage || stateRef.current.originalImage;
+        const current = mutationCoordinator.getState();
+        const active = current.processedImage || current.originalImage;
         if (!active) {
           throw new WebMCPValidationError("No image is currently loaded to export", "image");
         }
@@ -368,11 +445,13 @@ export default function StudioPlayground() {
           imageBase64: active,
           format,
           sizeBytes,
-          width: stateRef.current.metadata?.width,
-          height: stateRef.current.metadata?.height,
+          width: current.metadata?.width,
+          height: current.metadata?.height,
         };
       },
     }),
+    // Keep the adapter identity stable so useWebMCP does not re-register tools on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
 

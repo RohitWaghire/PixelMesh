@@ -28,6 +28,7 @@ interface CommittedMutation<T> {
 
 export interface StudioCanvasMutationOptions {
   resetHistory?: boolean;
+  ignoreGeneration?: boolean;
 }
 
 function cloneState(state: StudioCanvasState): StudioCanvasState {
@@ -101,7 +102,7 @@ export class StudioCanvasMutationCoordinator {
   enqueueReset(nextState: StudioCanvasState): Promise<void> {
     return this.enqueue(
       async () => ({ state: nextState, result: undefined }),
-      { resetHistory: true },
+      { resetHistory: true, ignoreGeneration: true },
     );
   }
 
@@ -112,13 +113,19 @@ export class StudioCanvasMutationCoordinator {
     const generationAtSchedule = this.generation;
     const run = this.queue.then(async () => {
       const committed = await mutation();
-      if (generationAtSchedule !== this.generation) {
+      if (!options.ignoreGeneration && generationAtSchedule !== this.generation) {
         return committed.result;
       }
       if (options.resetHistory) {
         this.applyReset(committed.state);
       } else {
-        this.current = cloneState(committed.state);
+        this.current = cloneState({
+          ...committed.state,
+          // Viewport controls are independent of image processing. Preserve
+          // changes made while the request was in flight.
+          sliderPos: this.current.sliderPos,
+          zoom: this.current.zoom,
+        });
         this.history.push(this.getState());
       }
       return committed.result;

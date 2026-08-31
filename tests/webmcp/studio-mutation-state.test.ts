@@ -158,3 +158,66 @@ test("undo invalidates an in-flight mutation so its stale result cannot overwrit
   assert.equal(coordinator.getState().processedImage, null);
   assert.equal(coordinator.getState().pipelineSteps.length, 0);
 });
+
+test("a mutation commit preserves viewport changes made while the request is in flight", async () => {
+  const coordinator = new StudioCanvasMutationCoordinator(initialState);
+  let releaseMutation!: () => void;
+  const mutationFinished = new Promise<void>((resolve) => {
+    releaseMutation = resolve;
+  });
+  let captured!: StudioCanvasState;
+
+  const inFlight = coordinator.enqueue(async () => {
+    captured = coordinator.getState();
+    await mutationFinished;
+    return {
+      state: {
+        ...captured,
+        processedImage: "image-1",
+        pipelineSteps: [{ tool: "brightness", params: {} }],
+      },
+      result: "image-1",
+    };
+  });
+
+  await Promise.resolve();
+  coordinator.update({ sliderPos: 82, zoom: 1.6 });
+  releaseMutation();
+  await inFlight;
+
+  assert.equal(coordinator.getState().sliderPos, 82);
+  assert.equal(coordinator.getState().zoom, 1.6);
+});
+
+test("undo does not cancel a queued image reset requested before it", async () => {
+  const coordinator = new StudioCanvasMutationCoordinator(initialState);
+  await coordinator.enqueue(async () => ({
+    state: resultState(coordinator, "image-1", "brightness"),
+    result: "image-1",
+  }));
+
+  let releaseMutation!: () => void;
+  const mutationFinished = new Promise<void>((resolve) => {
+    releaseMutation = resolve;
+  });
+  const inFlight = coordinator.enqueue(async () => {
+    await mutationFinished;
+    return {
+      state: resultState(coordinator, "stale-image-2", "contrast"),
+      result: "stale-image-2",
+    };
+  });
+  const reset = coordinator.enqueueReset({
+    ...initialState,
+    originalImage: "new-original",
+  });
+
+  const undo = coordinator.undo("undo_last");
+  assert.equal(undo.state.processedImage, null);
+  releaseMutation();
+  await Promise.all([inFlight, reset]);
+
+  assert.equal(coordinator.getState().originalImage, "new-original");
+  assert.equal(coordinator.getState().processedImage, null);
+  assert.equal(coordinator.getState().pipelineSteps.length, 0);
+});

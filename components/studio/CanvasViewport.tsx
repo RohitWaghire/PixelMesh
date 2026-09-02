@@ -134,7 +134,7 @@ export default function CanvasViewport({
                 <img
                   src={originalImage}
                   alt="Original"
-                  className="max-h-[500px] object-contain block w-full h-full"
+                  className="max-h-[500px] object-contain block pointer-events-none"
                 />
               </div>
             )}

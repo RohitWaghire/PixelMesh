@@ -496,7 +496,12 @@ export default function WebMCPSimulatorDrawer({
                 {tools.map((tool) => {
                   const descLen = tool.description.length;
                   const descBudgetOk = descLen < 500;
-                  const paramProps = tool.parameters?.properties ? Object.entries(tool.parameters.properties) : [];
+                  const inputSchema = tool.inputSchema || tool.parameters;
+                  const paramProps = inputSchema?.properties ? Object.entries(inputSchema.properties) : [];
+                  const annotations = tool.annotations;
+                  const readOnlyHint = tool.readOnlyHint ?? annotations?.readOnlyHint;
+                  const untrustedContentHint = tool.untrustedContentHint ?? annotations?.untrustedContentHint;
+                  const destructiveHint = tool.destructiveHint ?? annotations?.destructiveHint;
 
                   return (
                     <div
@@ -512,17 +517,17 @@ export default function WebMCPSimulatorDrawer({
 
                         {/* Security Badges */}
                         <div className="flex flex-col gap-1 items-end shrink-0">
-                          {tool.readOnlyHint && (
+                          {readOnlyHint && (
                             <span className="px-1.5 py-0.5 text-[9px] font-mono bg-blue-950 text-blue-300 border border-blue-800 rounded">
                               readOnly
                             </span>
                           )}
-                          {tool.untrustedContentHint && (
+                          {untrustedContentHint && (
                             <span className="px-1.5 py-0.5 text-[9px] font-mono bg-amber-950 text-amber-300 border border-amber-800 rounded">
                               untrustedContent
                             </span>
                           )}
-                          {!tool.destructiveHint && (
+                          {!destructiveHint && (
                             <span className="px-1.5 py-0.5 text-[9px] font-mono bg-zinc-800 text-zinc-400 rounded">
                               safe
                             </span>
@@ -558,7 +563,7 @@ export default function WebMCPSimulatorDrawer({
                           View JSON Schema ({paramProps.length} properties)
                         </summary>
                         <pre className="mt-2 p-2 bg-zinc-950 rounded text-[10px] text-emerald-300 border border-zinc-800 overflow-x-auto max-h-36">
-                          {JSON.stringify(tool.parameters || {}, null, 2)}
+                          {JSON.stringify(inputSchema || {}, null, 2)}
                         </pre>
                       </details>
                     </div>

@@ -56,10 +56,10 @@ export class S3StorageAdapter implements StorageAdapter {
 
   constructor(config?: StorageConfig & { s3Client?: any; getSignedUrlFn?: any }) {
     this.bucket = config?.s3Bucket || process.env.S3_BUCKET || "pixelmesh-storage";
-    this.region = config?.s3Region || process.env.S3_REGION || "auto";
+    this.region = config?.s3Region || process.env.S3_REGION || process.env.AWS_REGION || "auto";
     this.endpoint = config?.s3Endpoint || process.env.S3_ENDPOINT;
-    this.accessKeyId = config?.s3AccessKeyId || process.env.S3_ACCESS_KEY_ID;
-    this.secretAccessKey = config?.s3SecretAccessKey || process.env.S3_SECRET_ACCESS_KEY;
+    this.accessKeyId = config?.s3AccessKeyId || process.env.S3_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID;
+    this.secretAccessKey = config?.s3SecretAccessKey || process.env.S3_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY;
     this.cdnBaseUrl = config?.cdnBaseUrl || process.env.CDN_BASE_URL;
     this.defaultExpiresInSeconds = config?.defaultExpiresInSeconds || 900;
     this.customClient = config?.s3Client;

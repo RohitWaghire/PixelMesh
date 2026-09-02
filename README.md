@@ -23,6 +23,7 @@
 - [Image Processing Tool Catalog (22+ Tools)](#-image-processing-tool-catalog-22-tools)
 - [Cryptographic Authentication Specification](#-cryptographic-authentication-spec)
 - [Interactive Studio & Dev Console](#-interactive-studio--dev-console)
+- [WebMCP Challenge Judge Path](#webmcp-challenge-judge-path)
 - [Local Development & Testing](#-local-development--testing)
 - [Roadmap & Architecture Decisions](#-roadmap--architecture-decisions)
 - [License](#-license)
@@ -248,6 +249,28 @@ const signature = crypto.sign(null, Buffer.from(canonicalString), privateKey).to
 - **Studio Sandbox (`/studio`)**: Interactive 3-column workspace with a draggable Before/After split comparison slider, zoom/pan controls, parameter dials, sample preset images, and exportable JSON-RPC code snippets.
 - **Developer Dashboard (`/dashboard`)**: Keyring management, instant keypair generator, credit balance top-ups, and real-time telemetry stream auto-refreshing every 2.5 seconds.
 - **Config Hub (`/dashboard`)**: 1-click exporter generating ready-to-use configuration files for Claude Desktop, Cursor, Python, and Node.js.
+
+---
+
+## WebMCP Challenge Judge Path
+
+PixelMesh's WebMCP implementation is client-side and lives on the Studio page. The page registers eight tools on `document.modelContext`; each tool operates on the visible canvas and reuses the same state transitions as the human controls.
+
+### Browser setup
+
+- **ChatGPT desktop app**: Open the live project in its in-app browser. WebMCP is enabled by default there.
+- **Chrome**: Use Chrome 149 or later, open `chrome://flags/#enable-webmcp-testing`, enable the flag, relaunch Chrome, and open the live project.
+
+### Exact smoke test
+
+1. Open the deployed project URL and navigate to `/studio`.
+2. Ask the agent: `Load the Cyberpunk Portrait preset, apply make_sepia_tone with intensity 0.65, move the comparison slider to 65, then inspect the image.`
+3. Confirm that the agent discovers and calls `load_preset_image`, `apply_filter`, `set_comparison_slider`, and `inspect_image`.
+4. Confirm that the canvas changes visibly, the before/after divider moves, and the WebMCP activity panel records the calls and structured results.
+
+The Studio sandbox does not require a login or agent key for this smoke test. The separate `/api/mcp` endpoint and dashboard demonstrate PixelMesh's authenticated backend gateway. If the Studio reports `Polyfill` instead of `Native`, the browser is not exposing WebMCP and the browser setup should be corrected before judging.
+
+The submission-focused description, implementation timeline, and remaining release checklist are in [`docs/webmcp-challenge.md`](docs/webmcp-challenge.md).
 
 ---
 

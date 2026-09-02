@@ -2405,6 +2405,22 @@ test("webmcp-m2: [13.4] Security hints preservation across registration, retriev
   assert.equal(crop.destructiveHint, false);
 });
 
+test("webmcp-m2: [13.5] Native registration shape exposes inputSchema and annotations", () => {
+  const adapter = new MockStudioCanvasAdapter();
+  const tools = createStudioWebMCPTools(adapter);
+
+  assert.equal(tools.length, 8);
+  for (const tool of tools) {
+    assert.ok(tool.inputSchema, `Tool "${tool.name}" must expose inputSchema`);
+    assert.equal(tool.inputSchema, tool.parameters, `Tool "${tool.name}" schema aliases must stay aligned`);
+    assert.deepEqual(tool.annotations, {
+      readOnlyHint: tool.readOnlyHint,
+      untrustedContentHint: tool.untrustedContentHint,
+      destructiveHint: tool.destructiveHint,
+    });
+  }
+});
+
 // ============================================================================
 // Suite 14: M2 Mock Adapter Execution (All 8 Tools)
 // ============================================================================
@@ -3157,5 +3173,4 @@ test("webmcp-m2: [16.7] In-flight Cancellation for build_filter_pipeline: pipeli
     }
   );
 });
-
 

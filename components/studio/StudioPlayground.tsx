@@ -482,8 +482,9 @@ export default function StudioPlayground() {
 
   return (
     <div className="space-y-4">
-      {/* Declarative WebMCP Semantic Forms */}
-      <DeclarativeWebMCPForms />
+      {/* The native host already discovers the imperative catalog. Keep the
+          local declarative fallback from duplicating those tool names. */}
+      {!isNative && <DeclarativeWebMCPForms />}
 
       {/* Quick Toolbar / Sample Selector */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-zinc-900/60 border border-zinc-800 rounded-xl p-3 backdrop-blur-sm">

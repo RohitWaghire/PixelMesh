@@ -529,7 +529,7 @@ export function createExportCanvasImageTool(adapter: StudioCanvasAdapter): Model
  * @returns Array of ModelContextTool definitions ready for registration.
  */
 export function createStudioWebMCPTools(adapter: StudioCanvasAdapter): ModelContextTool[] {
-  return [
+  const tools = [
     createApplyFilterTool(adapter),
     createCropCanvasTool(adapter),
     createBuildFilterPipelineTool(adapter),
@@ -539,6 +539,17 @@ export function createStudioWebMCPTools(adapter: StudioCanvasAdapter): ModelCont
     createUndoCanvasActionTool(adapter),
     createExportCanvasImageTool(adapter),
   ];
+
+  // Keep the local simulator's alias while exposing the native WebMCP shape.
+  return tools.map((tool) => ({
+    ...tool,
+    inputSchema: tool.parameters,
+    annotations: {
+      readOnlyHint: tool.readOnlyHint,
+      untrustedContentHint: tool.untrustedContentHint,
+      destructiveHint: tool.destructiveHint,
+    },
+  }));
 }
 
 /**

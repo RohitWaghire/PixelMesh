@@ -5,8 +5,8 @@ import { canCallTool, declaredInputBytes, hasImageInput, toolCost } from "@/lib/
 test("tool policy: enforces explicit and category scopes", () => {
   assert.equal(canCallTool(["geometry:*"], "crop_image"), true);
   assert.equal(canCallTool(["geometry:*"], "adjust_brightness"), false);
-  assert.equal(canCallTool(["filters;*"], "adjust_brightness"), true);
-  assert.equal(canCallTool(["filters;*"], "export_image"), false);
+  assert.equal(canCallTool(["filters:*"], "adjust_brightness"), true);
+  assert.equal(canCallTool(["filters:*"], "export_image"), false);
 });
 
 test("tool policy: detects image inputs and computes billing classes", () => {

@@ -232,6 +232,7 @@ export default function StudioPlayground() {
                 image_base64: currentInput,
                 tool: toolId,
                 params: params || {},
+                output_format: (params as any)?.output_format || "png",
               }),
               signal,
             });
@@ -337,7 +338,8 @@ export default function StudioPlayground() {
 
       buildPipeline: async (
         operations: Array<{ tool: string; params?: any }>,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        outputFormat?: string
       ): Promise<StudioProcessResult> => {
         setLoading(true);
         try {
@@ -359,6 +361,7 @@ export default function StudioPlayground() {
               body: JSON.stringify({
                 image_base64: currentInput,
                 operations,
+                output_format: outputFormat || "png",
               }),
               signal,
             });

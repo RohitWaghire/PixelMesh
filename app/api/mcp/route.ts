@@ -425,12 +425,12 @@ export async function POST(req: NextRequest) {
       const returnType = toolArgs.return_type || toolArgs.returnType || "base64";
 
       if (toolName === "batch_filter_pipeline") {
-        if (!hasImageInput || !Array.isArray(toolArgs.operations)) {
+        if (!hasImageInput || !Array.isArray(toolArgs.operations) || toolArgs.operations.length === 0) {
           const response = NextResponse.json({
             jsonrpc,
             id,
             result: {
-              content: [{ type: "text", text: "Invalid arguments: image input and 'operations' array are required." }],
+              content: [{ type: "text", text: "Invalid arguments: image input and non-empty 'operations' array are required." }],
               isError: true
             }
           });

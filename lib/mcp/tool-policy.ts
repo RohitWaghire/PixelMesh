@@ -14,7 +14,7 @@ export function canCallTool(scopes: readonly string[] | null | undefined, toolNa
   return (
     allowedScopes.includes("all-tools") ||
     allowedScopes.includes(toolName) ||
-    (allowedScopes.includes("filters;*") && toolName !== "export_image") ||
+    (allowedScopes.includes("filters:*") && toolName !== "export_image") ||
     (allowedScopes.includes("geometry:*") && GEOMETRY_TOOLS.has(toolName))
   );
 }

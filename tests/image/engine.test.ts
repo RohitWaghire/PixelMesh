@@ -103,3 +103,17 @@ test("image-engine: crop_image and circle_crop handle out-of-bounds coordinates 
   assert.ok(resCircle.metadata.height >= 1);
 });
 
+test("image-engine: targetFormat 'avif' encodes image as AVIF", async () => {
+  const input = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mNk+M9QzwAEjDAGBgYACzkCAVdKjJgAAAAASUVORK5CYII=";
+  const res = await processSingleFilter(input, "grayscale_image", {}, "avif");
+  assert.equal(res.metadata.format, "heif"); // sharp/libvips reports AVIF format as 'heif'
+  assert.ok(res.imageBase64.startsWith("data:image/avif;base64,"));
+});
+
+test("image-engine: applyNoise executes without errors", async () => {
+  const input = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mNk+M9QzwAEjDAGBgYACzkCAVdKjJgAAAAASUVORK5CYII=";
+  const res = await processSingleFilter(input, "add_noise", { intensity: 50 });
+  assert.ok(res.imageBase64.length > 0);
+});
+
+

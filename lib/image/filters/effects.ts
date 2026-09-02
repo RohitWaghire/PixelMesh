@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import crypto from "crypto";
 
 export async function applySharpen(image: sharp.Sharp, params?: { sigma?: number; flat?: number; jagged?: number }) {
   const sigma = Math.max(0.3, Math.min(10, params?.sigma ?? 1.5));
@@ -17,15 +18,15 @@ export async function applyNoise(image: sharp.Sharp, intensity = 20, meta: sharp
   const height = meta.height || 600;
   const clampedIntensity = Math.max(1, Math.min(100, intensity));
 
-  // Generate synthetic noise buffer
+  // Generate synthetic noise buffer using fast native C++ random fill
   const pixelCount = width * height;
   const noiseBuf = Buffer.alloc(pixelCount);
-  const factor = (clampedIntensity / 100) * 80;
+  crypto.randomFillSync(noiseBuf);
 
+  const factor = (clampedIntensity / 100);
   for (let i = 0; i < pixelCount; i++) {
-    // Zero-centered random gaussian/uniform distribution
-    const rand = (Math.random() - 0.5) * factor;
-    noiseBuf[i] = Math.max(0, Math.min(255, 128 + rand));
+    // Map raw 0-255 byte around 128 midpoint with intensity scaling
+    noiseBuf[i] = Math.max(0, Math.min(255, Math.round(128 + (noiseBuf[i] - 128) * factor)));
   }
 
   const noiseSharp = sharp(noiseBuf, {

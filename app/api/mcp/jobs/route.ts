@@ -6,6 +6,7 @@ import { nonceCache } from "@/lib/auth/nonce-cache";
 import { jobQueue, inferJobPriority } from "@/lib/queue/job-queue";
 import { JobPriority, ReturnType } from "@/lib/queue/types";
 import { telemetryStore } from "@/lib/telemetry/store";
+import { canCallTool } from "@/lib/mcp/tool-policy";
 
 export async function POST(req: NextRequest) {
   const startTime = performance.now();
@@ -153,12 +154,7 @@ export async function POST(req: NextRequest) {
   }
 
   const allowedScopes = agentKey.scopes || ["all-tools"];
-  const hasPermission =
-    allowedScopes.includes("all-tools") ||
-    allowedScopes.includes(toolName) ||
-    (allowedScopes.includes("filters;*") && toolName !== "export_image") ||
-    (allowedScopes.includes("geometry:*") &&
-      ["crop_image", "circle_crop", "flip_image", "rotate_image", "straighten_photo"].includes(toolName));
+  const hasPermission = canCallTool(allowedScopes, toolName);
 
   if (!hasPermission) {
     await telemetryStore.addLog({

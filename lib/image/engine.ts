@@ -433,6 +433,20 @@ export async function resolveInputImage(
     throw new Error("Invalid image input: one of 'image_base64', 'image_key', or 'image_url' is required.");
   }
 
+  // Handle direct Buffer input
+  if (Buffer.isBuffer(input)) {
+    return { buffer: input, mimeType: "image/png", sourceType: "base64" };
+  }
+  if (input && typeof input === "object" && Buffer.isBuffer(input.buffer)) {
+    return {
+      buffer: input.buffer,
+      mimeType: input.mimeType || "image/png",
+      sourceType: input.sourceType || "base64",
+      sourceKey: input.sourceKey,
+      sourceUrl: input.sourceUrl
+    };
+  }
+
   // Handle string input
   if (typeof input === "string") {
     const trimmed = input.trim();
@@ -683,6 +697,7 @@ export async function processSingleFilter(
   const filterResult: FilterResult = {
     imageBase64: base64Result,
     image_base64: base64Result,
+    outputBuffer,
     inputSizeBytes: resolved.buffer.length,
     metadata: {
       width: outMeta.width,
@@ -740,7 +755,8 @@ export async function processPipeline(
     if (i === 0 && res.inputSizeBytes) {
       originalInputSizeBytes = res.inputSizeBytes;
     }
-    currentInput = res.imageBase64;
+    // Pass raw Buffer to next pipeline step to eliminate intermediate Base64 serialization churn
+    currentInput = res.outputBuffer ? { buffer: res.outputBuffer, mimeType: `image/${res.metadata.format || "png"}` } : res.imageBase64;
     finalMeta = res.metadata;
     lastResult = res;
   }

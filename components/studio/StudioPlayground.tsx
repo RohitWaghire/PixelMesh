@@ -442,10 +442,52 @@ export default function StudioPlayground() {
           throw new WebMCPValidationError("No image is currently loaded to export", "image");
         }
 
-        const sizeBytes = Math.round(active.length * 0.75);
+        const normFormat = (format || "png").toLowerCase();
+        const mimeType =
+          normFormat === "jpeg" || normFormat === "jpg"
+            ? "image/jpeg"
+            : normFormat === "webp"
+            ? "image/webp"
+            : normFormat === "avif"
+            ? "image/avif"
+            : "image/png";
+
+        let exportedBase64 = active;
+        if (typeof window !== "undefined" && typeof document !== "undefined") {
+          try {
+            const img = new Image();
+            img.src = active;
+            await new Promise<void>((resolve, reject) => {
+              if (img.complete) {
+                resolve();
+              } else {
+                img.onload = () => resolve();
+                img.onerror = () => reject(new Error("Failed to load active image for transcoding"));
+              }
+            });
+
+            const canvas = document.createElement("canvas");
+            canvas.width = img.naturalWidth || img.width;
+            canvas.height = img.naturalHeight || img.height;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              if (mimeType === "image/jpeg") {
+                ctx.fillStyle = "#ffffff";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+              }
+              ctx.drawImage(img, 0, 0);
+              const qualityRatio = Math.max(0.1, Math.min(1.0, quality / 100));
+              exportedBase64 = canvas.toDataURL(mimeType, qualityRatio);
+            }
+          } catch {
+            exportedBase64 = active;
+          }
+        }
+
+        const sizeBytes = Math.round(exportedBase64.length * 0.75);
         return {
-          imageBase64: active,
-          format,
+          imageBase64: exportedBase64,
+          format: normFormat,
           sizeBytes,
           width: current.metadata?.width,
           height: current.metadata?.height,

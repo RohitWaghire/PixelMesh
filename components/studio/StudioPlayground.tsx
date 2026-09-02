@@ -469,7 +469,13 @@ export default function StudioPlayground() {
     if (!originalImage) return;
 
     try {
-      await adapter.applyFilter(selectedTool.id, toolParams);
+      // Keep manual executions on the same ModelContext path as browser agents
+      // so the HUD and Call Logs reflect every tool execution consistently.
+      await simulateAgentCall(
+        "apply_filter",
+        { tool: selectedTool.id, params: toolParams },
+        { caller: "human:studio" },
+      );
     } catch (err: any) {
       console.error("Error executing filter:", err);
       alert(err?.message || "Filter failed to apply");
@@ -502,9 +508,10 @@ export default function StudioPlayground() {
               <button
                 key={s.name}
                 onClick={() => loadSampleImage(s.url)}
+                aria-label={`Load ${s.name}`}
                 className="px-2.5 py-1 text-xs text-zinc-300 hover:text-white bg-zinc-950/70 hover:bg-zinc-800/80 border border-zinc-800 rounded-lg transition"
               >
-                Sample {idx + 1}
+                {s.name} (Sample {idx + 1})
               </button>
             ))}
           </div>

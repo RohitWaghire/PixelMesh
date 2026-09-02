@@ -264,7 +264,7 @@ PixelMesh's WebMCP implementation is client-side and lives on the Studio page. T
 ### Exact smoke test
 
 1. Open the deployed project URL and navigate to `/studio`.
-2. Ask the agent: `Load the Cyberpunk Portrait preset, apply make_sepia_tone with intensity 0.65, move the comparison slider to 65, then inspect the image.`
+2. Ask the agent: `Load the Neon Cyberpunk Portrait preset (preset index 0), apply make_sepia_tone with intensity 0.65, move the comparison slider to 65, then inspect the image.`
 3. Confirm that the agent discovers and calls `load_preset_image`, `apply_filter`, `set_comparison_slider`, and `inspect_image`.
 4. Confirm that the canvas changes visibly, the before/after divider moves, and the WebMCP activity panel records the calls and structured results.
 

@@ -17,7 +17,7 @@ This document is the working submission record for the OpenAI WebMCP Challenge. 
 
 1. Open the deployed URL and append `/studio`.
 2. Use ChatGPT's in-app browser, or Chrome 149+ with the WebMCP testing flag enabled and the browser relaunched.
-3. Ask the agent: `Load the Cyberpunk Portrait preset, apply make_sepia_tone with intensity 0.65, move the comparison slider to 65, then inspect the image.`
+3. Ask the agent: `Load the Neon Cyberpunk Portrait preset (preset index 0), apply make_sepia_tone with intensity 0.65, move the comparison slider to 65, then inspect the image.`
 4. Confirm the agent uses the four named WebMCP tools and that the visible canvas, comparison slider, and activity history update.
 
 No login or credentials are required for the Studio smoke test. The Studio processing route is rate-limited and accepts images up to 10 MB. The backend `/api/mcp` route is a separate signed JSON-RPC interface documented in the main README.

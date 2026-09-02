@@ -1,6 +1,6 @@
 # PixelMesh reorganization report
 
-Status: implemented on `dev`, with the WebMCP Studio work proposed for `main` in PR [#3](https://github.com/RohitWaghire/PixelMesh/pull/3).
+Status: implemented on `dev` and merged to `main`.
 
 This document records the folder cleanup and codebase reorganization completed on 2026-08-31. It is the maintained summary of what moved, what was preserved, and how to restore reproducible local state.
 
@@ -74,7 +74,7 @@ Historical material was moved, not destroyed:
 - `BRAINSTORM_IDEAS.md` and the superseded project-status roadmap.
 - Consolidated workspace planning records.
 
-The archive is `D:\Antigravity\archive\pixelmesh-pre-reorg-2026-08-31\`. Its [manifest](../../archive/pixelmesh-pre-reorg-2026-08-31/manifest.md) maps every archived source path to its reason and restore location. `SHA256SUMS.txt` contains the source hashes, sizes, and paths used for before/after verification.
+The workspace archive is maintained locally outside the repository at `archive/pixelmesh-pre-reorg-2026-08-31/` (with manifest and SHA256 checksums mapping archived source paths to reasons and restore locations).
 
 The private development key under `.keys/` was kept in place and was not copied into the archive, committed, logged, or included in this report.
 
@@ -104,11 +104,9 @@ Expected fault-injection messages from Redis, production preflight, and event-li
 
 ## Branch and release state
 
-- `main` contains the cleanup commit `f28ab193`.
-- `dev` contains `f28ab193` plus WebMCP Studio commit `2a417fff`.
-- PR [#3](https://github.com/RohitWaghire/PixelMesh/pull/3) proposes `dev` → `main` and is the promotion path for the WebMCP milestone.
-
-The cleanup and feature commits contain no private key material. Merge the PR only after its GitHub checks complete and the reviewer confirms the Studio/WebMCP behavior.
+- `main` contains the cleanup and WebMCP integration merged via PR [#3](https://github.com/RohitWaghire/PixelMesh/pull/3) and PR [#4](https://github.com/RohitWaghire/PixelMesh/pull/4).
+- `dev` contains active development and maintenance updates.
+- PR [#5](https://github.com/RohitWaghire/PixelMesh/pull/5) promotes documentation and viewport alignment fixes to `main`.
 
 ## Restore instructions
 

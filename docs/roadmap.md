@@ -2,7 +2,7 @@
 
 ## Current state
 
-PixelMesh provides signed agent registration, credit metering, MCP image tools, asynchronous jobs, object storage adapters, and a Studio interface. The `dev` branch now also contains the WebMCP Studio integration; PR #3 tracks its promotion to `main`.
+PixelMesh provides signed agent registration, credit metering, MCP image tools, asynchronous jobs, object storage adapters, and a Studio interface. WebMCP Studio integration is merged in `main`, with ongoing maintenance and documentation tracked on `dev`.
 
 ## Cleanup sequence
 

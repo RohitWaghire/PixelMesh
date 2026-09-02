@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
   }
 
   const timestampNum = parseInt(timestampStr, 10);
-  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum);
+  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum, callerFingerprint);
   if (!nonceCheck.valid) {
     return NextResponse.json({
       error: `Unauthorized: ${nonceCheck.reason}`
@@ -76,7 +76,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   const timestampNum = parseInt(timestampStr, 10);
-  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum);
+  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum, callerFingerprint);
   if (!nonceCheck.valid) {
     return NextResponse.json({
       error: `Unauthorized: ${nonceCheck.reason}`

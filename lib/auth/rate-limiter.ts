@@ -79,18 +79,19 @@ export async function checkRateLimit(
     if (typeof redis.incr === "function" && typeof redis.expire === "function") {
       const count = await redis.incr(rateLimitKey);
 
+      let resetSeconds = windowSeconds;
       if (count === 1) {
         await redis.expire(rateLimitKey, windowSeconds);
-        return {
-          allowed: true,
-          limit,
-          remaining: limit - 1,
-          resetSeconds: windowSeconds
-        };
+      } else {
+        const ttl = typeof redis.ttl === "function" ? await redis.ttl(rateLimitKey) : -1;
+        // If Redis accepted INCR but key has no TTL (ttl === -1) or expired, restore TTL to heal counter
+        if (ttl <= 0) {
+          await redis.expire(rateLimitKey, windowSeconds);
+          resetSeconds = windowSeconds;
+        } else {
+          resetSeconds = ttl;
+        }
       }
-
-      const ttl = await redis.ttl(rateLimitKey);
-      const resetSeconds = ttl > 0 ? ttl : windowSeconds;
 
       if (count > limit) {
         return {

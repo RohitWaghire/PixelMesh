@@ -411,7 +411,15 @@ export function parseBase64Image(dataUriOrBase64: string): { buffer: Buffer; mim
  * Formats image buffer as data URI
  */
 export function formatBase64Result(buffer: Buffer, format: string): string {
-  const mime = format === "jpeg" || format === "jpg" ? "image/jpeg" : format === "webp" ? "image/webp" : "image/png";
+  const norm = (format || "png").toLowerCase();
+  const mime =
+    norm === "jpeg" || norm === "jpg"
+      ? "image/jpeg"
+      : norm === "webp"
+      ? "image/webp"
+      : norm === "avif"
+      ? "image/avif"
+      : "image/png";
   return `data:${mime};base64,${buffer.toString("base64")}`;
 }
 
@@ -423,6 +431,20 @@ export async function resolveInputImage(
 ): Promise<ResolvedImageInput> {
   if (!input) {
     throw new Error("Invalid image input: one of 'image_base64', 'image_key', or 'image_url' is required.");
+  }
+
+  // Handle direct Buffer input
+  if (Buffer.isBuffer(input)) {
+    return { buffer: input, mimeType: "image/png", sourceType: "base64" };
+  }
+  if (input && typeof input === "object" && Buffer.isBuffer(input.buffer)) {
+    return {
+      buffer: input.buffer,
+      mimeType: input.mimeType || "image/png",
+      sourceType: input.sourceType || "base64",
+      sourceKey: input.sourceKey,
+      sourceUrl: input.sourceUrl
+    };
   }
 
   // Handle string input
@@ -448,6 +470,9 @@ export async function resolveInputImage(
 
     // Storage key string
     const buffer = await storageClient.getObjectBuffer(trimmed);
+    if (buffer.length > MAX_IMAGE_SIZE_BYTES) {
+      throw new Error(`Storage image size (${(buffer.length / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed 50MB limit.`);
+    }
     return { buffer, mimeType: "image/png", sourceType: "storage", sourceKey: trimmed };
   }
 
@@ -463,6 +488,9 @@ export async function resolveInputImage(
 
   if (storageKey) {
     const buffer = await storageClient.getObjectBuffer(storageKey);
+    if (buffer.length > MAX_IMAGE_SIZE_BYTES) {
+      throw new Error(`Storage image size (${(buffer.length / (1024 * 1024)).toFixed(1)}MB) exceeds maximum allowed 50MB limit.`);
+    }
     return { buffer, mimeType: "image/png", sourceType: "storage", sourceKey: storageKey };
   }
 
@@ -648,11 +676,13 @@ export async function processSingleFilter(
       throw new Error(`Unknown filter tool: ${tool}`);
   }
 
-  const targetFormat = outputFormat || metadata.format || "png";
+  const targetFormat = (outputFormat || metadata.format || "png").toLowerCase();
   if (targetFormat === "jpeg" || targetFormat === "jpg") {
     image = image.jpeg({ quality: 90 });
   } else if (targetFormat === "webp") {
     image = image.webp({ quality: 90 });
+  } else if (targetFormat === "avif") {
+    image = image.avif({ quality: 80 });
   } else {
     image = image.png();
   }
@@ -667,6 +697,7 @@ export async function processSingleFilter(
   const filterResult: FilterResult = {
     imageBase64: base64Result,
     image_base64: base64Result,
+    outputBuffer,
     inputSizeBytes: resolved.buffer.length,
     metadata: {
       width: outMeta.width,
@@ -724,7 +755,8 @@ export async function processPipeline(
     if (i === 0 && res.inputSizeBytes) {
       originalInputSizeBytes = res.inputSizeBytes;
     }
-    currentInput = res.imageBase64;
+    // Pass raw Buffer to next pipeline step to eliminate intermediate Base64 serialization churn
+    currentInput = res.outputBuffer ? { buffer: res.outputBuffer, mimeType: `image/${res.metadata.format || "png"}` } : res.imageBase64;
     finalMeta = res.metadata;
     lastResult = res;
   }

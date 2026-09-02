@@ -76,8 +76,42 @@ export async function checkRateLimit(
   const rateLimitKey = `pixelmesh:ratelimit:${key}`;
 
   try {
-    const currentVal = await redis.get(rateLimitKey);
+    if (typeof redis.incr === "function" && typeof redis.expire === "function") {
+      const count = await redis.incr(rateLimitKey);
 
+      let resetSeconds = windowSeconds;
+      if (count === 1) {
+        await redis.expire(rateLimitKey, windowSeconds);
+      } else {
+        const ttl = typeof redis.ttl === "function" ? await redis.ttl(rateLimitKey) : -1;
+        // If Redis accepted INCR but key has no TTL (ttl === -1) or expired, restore TTL to heal counter
+        if (ttl <= 0) {
+          await redis.expire(rateLimitKey, windowSeconds);
+          resetSeconds = windowSeconds;
+        } else {
+          resetSeconds = ttl;
+        }
+      }
+
+      if (count > limit) {
+        return {
+          allowed: false,
+          limit,
+          remaining: 0,
+          resetSeconds
+        };
+      }
+
+      return {
+        allowed: true,
+        limit,
+        remaining: Math.max(0, limit - count),
+        resetSeconds
+      };
+    }
+
+    // Fallback if incr/expire not implemented on custom client
+    const currentVal = await redis.get(rateLimitKey);
     if (currentVal === null) {
       await redis.set(rateLimitKey, "1", "EX", windowSeconds);
       return {

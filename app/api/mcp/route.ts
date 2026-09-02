@@ -64,8 +64,8 @@ export async function POST(req: NextRequest) {
   const nowSec = Math.floor(Date.now() / 1000);
   const driftMs = (nowSec - timestampNum) * 1000;
 
-  // 2. Anti-Replay and Clock Skew Check via Distributed Nonce Cache
-  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum);
+  // 2. Anti-Replay and Clock Skew Check via Distributed Nonce Cache (namespaced by fingerprint)
+  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum, fingerprint);
   if (!nonceCheck.valid) {
     await telemetryStore.addLog({
       timestamp: new Date().toISOString(),
@@ -425,12 +425,12 @@ export async function POST(req: NextRequest) {
       const returnType = toolArgs.return_type || toolArgs.returnType || "base64";
 
       if (toolName === "batch_filter_pipeline") {
-        if (!hasImageInput || !Array.isArray(toolArgs.operations)) {
+        if (!hasImageInput || !Array.isArray(toolArgs.operations) || toolArgs.operations.length === 0) {
           const response = NextResponse.json({
             jsonrpc,
             id,
             result: {
-              content: [{ type: "text", text: "Invalid arguments: image input and 'operations' array are required." }],
+              content: [{ type: "text", text: "Invalid arguments: image input and non-empty 'operations' array are required." }],
               isError: true
             }
           });

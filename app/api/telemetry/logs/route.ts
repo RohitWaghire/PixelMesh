@@ -6,38 +6,57 @@ import { nonceCache } from "@/lib/auth/nonce-cache";
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
-  const take = url.searchParams.get("take") ? parseInt(url.searchParams.get("take")!, 10) : 100;
-  const skip = url.searchParams.get("skip") ? parseInt(url.searchParams.get("skip")!, 10) : 0;
+  const take = url.searchParams.get("take") ? Math.min(100, Math.max(1, parseInt(url.searchParams.get("take")!, 10))) : 50;
+  const skip = url.searchParams.get("skip") ? Math.max(0, parseInt(url.searchParams.get("skip")!, 10)) : 0;
   let fingerprint = url.searchParams.get("fingerprint") || undefined;
   const status = url.searchParams.get("status") as any || undefined;
 
-  // If caller passes auth headers, enforce tenant isolation unless admin
   const callerFingerprint = req.headers.get("x-agent-key-fingerprint");
   const timestampStr = req.headers.get("x-agent-timestamp");
   const nonce = req.headers.get("x-agent-nonce");
   const signature = req.headers.get("x-agent-signature");
 
-  if (callerFingerprint && timestampStr && nonce && signature) {
-    const callerKey = await keyStore.findKeyByFingerprint(callerFingerprint);
-    if (callerKey) {
-      const isValidSig = verifyRequestSignature({
-        publicKeyPem: callerKey.publicKeyPem,
-        signature,
-        method: "GET",
-        path: url.pathname,
-        timestamp: timestampStr,
-        nonce,
-        body: ""
-      });
+  if (!callerFingerprint || !timestampStr || !nonce || !signature) {
+    return NextResponse.json({
+      error: "Unauthorized: Accessing telemetry audit logs requires cryptographic agent signature."
+    }, { status: 401 });
+  }
 
-      if (isValidSig) {
-        const isAdmin = callerKey.scopes?.includes("admin") || callerKey.scopes?.includes("all-tools");
-        if (!isAdmin) {
-          // Non-admin callers can only view their own logs
-          fingerprint = callerFingerprint;
-        }
-      }
-    }
+  const timestampNum = parseInt(timestampStr, 10);
+  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum, callerFingerprint);
+  if (!nonceCheck.valid) {
+    return NextResponse.json({
+      error: `Unauthorized: ${nonceCheck.reason}`
+    }, { status: nonceCheck.statusCode || 401 });
+  }
+
+  const callerKey = await keyStore.findKeyByFingerprint(callerFingerprint);
+  if (!callerKey || callerKey.status === "revoked") {
+    return NextResponse.json({
+      error: "Unauthorized: Agent key not found or revoked."
+    }, { status: 401 });
+  }
+
+  const isValidSig = verifyRequestSignature({
+    publicKeyPem: callerKey.publicKeyPem,
+    signature,
+    method: "GET",
+    path: url.pathname,
+    timestamp: timestampStr,
+    nonce,
+    body: ""
+  });
+
+  if (!isValidSig) {
+    return NextResponse.json({
+      error: "Unauthorized: Signature verification failed."
+    }, { status: 401 });
+  }
+
+  const isAdmin = callerKey.scopes?.includes("admin") || callerKey.scopes?.includes("all-tools");
+  if (!isAdmin) {
+    // Non-admin callers can only view their own logs (tenant isolation)
+    fingerprint = callerFingerprint;
   }
 
   const logs = await telemetryStore.getLogs({ take, skip, fingerprint, status });
@@ -57,7 +76,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   const timestampNum = parseInt(timestampStr, 10);
-  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum);
+  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum, callerFingerprint);
   if (!nonceCheck.valid) {
     return NextResponse.json({
       error: `Unauthorized: ${nonceCheck.reason}`

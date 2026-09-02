@@ -99,7 +99,8 @@ export interface StudioCanvasAdapter {
 
   buildPipeline(
     operations: Array<{ tool: string; params?: any }>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    outputFormat?: string
   ): Promise<StudioProcessResult>;
 
   loadPreset(
@@ -308,7 +309,7 @@ export function createBuildFilterPipelineTool(adapter: StudioCanvasAdapter): Mod
         if (params.operations.length > 5) {
           throw new WebMCPValidationError("Pipeline cannot exceed maximum of 5 operations", "operations");
         }
-        return await adapter.buildPipeline(params.operations, options?.signal);
+        return await adapter.buildPipeline(params.operations, options?.signal, params.output_format);
       });
     },
   };

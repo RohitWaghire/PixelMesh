@@ -15,6 +15,7 @@ export interface ImageMetadata {
 export interface FilterResult {
   imageBase64: string;
   image_base64?: string;
+  outputBuffer?: Buffer;
   imageKey?: string;
   image_key?: string;
   imageUrl?: string;

@@ -59,15 +59,18 @@ export class NonceCache {
   }
 
   /**
-   * Formats the Redis key for a given nonce string.
+   * Formats the Redis key for a given nonce string, optionally namespaced by agent fingerprint.
    */
-  public formatKey(nonce: string): string {
+  public formatKey(nonce: string, fingerprint?: string): string {
+    if (fingerprint) {
+      return `${NONCE_KEY_PREFIX}${fingerprint}:${nonce}`;
+    }
     return `${NONCE_KEY_PREFIX}${nonce}`;
   }
 
   /**
    * Asynchronously validates timestamp clock skew and records the nonce in Redis
-   * using atomic `SET pixelmesh:nonce:<nonce> <timestamp> EX 60 NX`.
+   * using atomic `SET pixelmesh:nonce:[<fingerprint>:]<nonce> <timestamp> EX 60 NX`.
    * 
    * Pre-conditions:
    * 1. Nonce must be a non-empty string.
@@ -77,14 +80,15 @@ export class NonceCache {
    * Distributed Anti-Replay Protocol:
    * 1. Performs local clock skew validation. If drift > 60s, immediately rejects (HTTP 401)
    *    without sending a command to Redis.
-   * 2. Issues `SET pixelmesh:nonce:<nonce> <timestamp> EX 60 NX` to Redis.
+   * 2. Issues `SET pixelmesh:nonce:[<fingerprint>:]<nonce> <timestamp> EX 60 NX` to Redis.
    * 3. If Redis returns "OK", the nonce is fresh and recorded with 60s TTL -> valid: true.
    * 4. If Redis returns null (key exists), duplicate nonce detected -> valid: false (HTTP 401).
    * 5. If Redis throws an unexpected error, fails closed -> valid: false (HTTP 500).
    */
   public async checkAndRecord(
     nonce: string,
-    timestampSeconds: number
+    timestampSeconds: number,
+    fingerprint?: string
   ): Promise<NonceValidationResult> {
     // 1. Input Sanitization & Type Validation
     if (!nonce || typeof nonce !== "string" || nonce.trim() === "") {
@@ -120,7 +124,7 @@ export class NonceCache {
     }
 
     // 3. Distributed Redis Atomic SET EX NX
-    const key = this.formatKey(nonce);
+    const key = this.formatKey(nonce, fingerprint);
 
     try {
       const res = await this.redis.set(

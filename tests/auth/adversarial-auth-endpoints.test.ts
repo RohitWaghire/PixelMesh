@@ -978,7 +978,7 @@ test("adversarial 4.7: Redis nonce persistence & TTL verification on /api/mcp in
 
   // Directly inspect Redis client state
   const redis = getRedisClient();
-  const redisKey = `${NONCE_KEY_PREFIX}${nonce}`;
+  const redisKey = nonceCache.formatKey(nonce, agent.fingerprint);
   const storedVal = await redis.get(redisKey);
   assert.equal(storedVal, ts);
 
@@ -1380,5 +1380,92 @@ test("security 6.4: unauthenticated DELETE /api/telemetry/logs is rejected with 
   assert.equal(delRes.status, 401);
   assert.ok((await delRes.json()).error.includes("Unauthorized"));
 });
+
+test("security 6.5: unauthenticated GET /api/telemetry/logs is rejected with 401", async () => {
+  const req = new NextRequest("http://localhost:3000/api/telemetry/logs");
+  const res = await telemetryGetHandler(req);
+  assert.equal(res.status, 401);
+  const json = await res.json();
+  assert.ok(json.error.includes("Unauthorized"));
+});
+
+test("security 6.6: signed GET /api/telemetry/logs enforces tenant isolation for standard agents", async () => {
+  const kpA = generateAgentKeypair("ed25519");
+  const fpA = computeKeyFingerprint(kpA.publicKeyPem);
+  await keyStore.registerKey({
+    fingerprint: fpA,
+    agentName: "Agent-TenantA",
+    publicKeyPem: kpA.publicKeyPem,
+    algorithm: "ed25519",
+    creditsBalance: 100,
+    scopes: ["tools:execute"]
+  });
+
+  const kpB = generateAgentKeypair("ed25519");
+  const fpB = computeKeyFingerprint(kpB.publicKeyPem);
+  await keyStore.registerKey({
+    fingerprint: fpB,
+    agentName: "Agent-TenantB",
+    publicKeyPem: kpB.publicKeyPem,
+    algorithm: "ed25519",
+    creditsBalance: 100,
+    scopes: ["tools:execute"]
+  });
+
+  const agentA = { ...kpA, fingerprint: fpA };
+  const agentB = { ...kpB, fingerprint: fpB };
+
+  // Record logs for both tenants
+  await telemetryStore.record({
+    fingerprint: agentA.fingerprint,
+    agentName: "Agent-TenantA",
+    tool: "crop_image",
+    status: "success",
+    creditsDeducted: 1,
+    executionTimeMs: 15,
+    timestamp: new Date().toISOString()
+  });
+
+  await telemetryStore.record({
+    fingerprint: agentB.fingerprint,
+    agentName: "Agent-TenantB",
+    tool: "adjust_brightness",
+    status: "success",
+    creditsDeducted: 1,
+    executionTimeMs: 20,
+    timestamp: new Date().toISOString()
+  });
+
+  // Agent A queries telemetry attempting to view all or Agent B's logs
+  const ts = Math.floor(Date.now() / 1000).toString();
+  const nonce = "tenant-a-telemetry-" + Date.now();
+  const sig = signRequestPayload({
+    privateKeyPem: agentA.privateKeyPem,
+    method: "GET",
+    path: "/api/telemetry/logs",
+    timestamp: ts,
+    nonce,
+    body: ""
+  });
+
+  const req = new NextRequest(`http://localhost:3000/api/telemetry/logs?fingerprint=${agentB.fingerprint}`, {
+    headers: {
+      "x-agent-key-fingerprint": agentA.fingerprint,
+      "x-agent-timestamp": ts,
+      "x-agent-nonce": nonce,
+      "x-agent-signature": sig
+    }
+  });
+
+  const res = await telemetryGetHandler(req);
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  // Standard agent should ONLY receive logs matching Agent A's fingerprint
+  assert.ok(json.logs.length > 0);
+  for (const log of json.logs) {
+    assert.equal(log.fingerprint, agentA.fingerprint);
+  }
+});
+
 
 

@@ -29,10 +29,12 @@ export default function CanvasViewport({
   children,
 }: CanvasViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const imageWrapperRef = useRef<HTMLDivElement>(null);
 
   const handleSliderMove = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
+    const targetEl = imageWrapperRef.current || containerRef.current;
+    if (!targetEl) return;
+    const rect = targetEl.getBoundingClientRect();
     const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
     const x = clientX - rect.left;
     const pct = Math.max(0, Math.min(100, (x / rect.width) * 100));
@@ -115,6 +117,7 @@ export default function CanvasViewport({
       >
         {originalImage ? (
           <div
+            ref={imageWrapperRef}
             style={{ transform: `scale(${zoom})`, transformOrigin: "center center" }}
             className="relative transition-transform duration-75 max-w-full max-h-full flex items-center justify-center shadow-2xl rounded-lg overflow-hidden border border-zinc-800"
           >

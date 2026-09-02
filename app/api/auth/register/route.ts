@@ -63,6 +63,12 @@ export async function POST(req: NextRequest) {
       mcp_endpoint: "/api/mcp"
     }, { status: isNew ? 201 : 200 });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || "Failed to register agent" }, { status: 500 });
+    if (err.message && (err.message.includes("revoked") || err.message.includes("Cannot "))) {
+      return NextResponse.json({ error: err.message }, { status: 500 });
+    }
+    console.error("[AuthRegister] Database/registration error:", err);
+    return NextResponse.json({
+      error: "Internal server error: Unable to process agent registration. Please try again later."
+    }, { status: 500 });
   }
 }

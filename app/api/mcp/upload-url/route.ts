@@ -9,19 +9,20 @@ const MAX_IMAGE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB limit
 
 export async function POST(req: NextRequest) {
   const startTime = performance.now();
-  const rawBodyText = await req.text();
+  try {
+    const rawBodyText = await req.text();
 
-  let bodyJson: any = {};
-  if (rawBodyText && rawBodyText.trim().length > 0) {
-    try {
-      bodyJson = JSON.parse(rawBodyText);
-    } catch {
-      return NextResponse.json({
-        success: false,
-        error: "Parse error: Invalid JSON in request body"
-      }, { status: 400 });
+    let bodyJson: any = {};
+    if (rawBodyText && rawBodyText.trim().length > 0) {
+      try {
+        bodyJson = JSON.parse(rawBodyText);
+      } catch {
+        return NextResponse.json({
+          success: false,
+          error: "Parse error: Invalid JSON in request body"
+        }, { status: 400 });
+      }
     }
-  }
 
   const {
     filename,
@@ -63,8 +64,8 @@ export async function POST(req: NextRequest) {
   const nowSec = Math.floor(Date.now() / 1000);
   const driftMs = (nowSec - timestampNum) * 1000;
 
-  // 2. Anti-Replay and Clock Skew Check via Distributed Nonce Cache
-  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum);
+  // 2. Anti-Replay and Clock Skew Check via Distributed Nonce Cache (namespaced per agent)
+  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum, fingerprint);
   if (!nonceCheck.valid) {
     await telemetryStore.addLog({
       timestamp: new Date().toISOString(),
@@ -157,13 +158,12 @@ export async function POST(req: NextRequest) {
   }
 
   // 6. Generate Pre-signed Upload URL
-  try {
-    const uploadResult = await storageClient.getUploadUrl({
-      filename,
-      contentType: content_type,
-      expiresInSeconds: expires_seconds,
-      maxSizeBytes: MAX_IMAGE_SIZE_BYTES
-    });
+  const uploadResult = await storageClient.getUploadUrl({
+    filename,
+    contentType: content_type,
+    expiresInSeconds: expires_seconds,
+    maxSizeBytes: MAX_IMAGE_SIZE_BYTES
+  });
 
     const latency = Math.round(performance.now() - startTime);
     await telemetryStore.addLog({

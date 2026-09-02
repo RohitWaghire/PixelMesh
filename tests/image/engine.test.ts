@@ -66,3 +66,54 @@ test("image-engine: batch_filter_pipeline executes multi-step recipe", async () 
   assert.equal(res.metadata.height, 200);
   assert.ok(res.executionTimeMs > 0);
 });
+
+test("image-engine: circle_crop sanitizes arbitrary SVG XML injection attempt", async () => {
+  const input = await createTestImageBase64(200, 200);
+  // Malicious SVG injection payload attempting to inject tags via background
+  const maliciousBackground = 'red" /><circle cx="50" cy="50" r="40" fill="blue" /><rect fill="green';
+  const res = await processSingleFilter(input, "circle_crop", {
+    radius: 80,
+    background: maliciousBackground
+  });
+
+  assert.ok(res.imageBase64.startsWith("data:image/png;base64,"));
+  assert.equal(res.metadata.width, 160);
+  assert.equal(res.metadata.height, 160);
+});
+
+test("image-engine: crop_image and circle_crop handle out-of-bounds coordinates safely without crash", async () => {
+  const input = await createTestImageBase64(100, 100);
+  // Out of bounds crop
+  const resCrop = await processSingleFilter(input, "crop_image", {
+    left: 150,
+    top: 150,
+    width: 200,
+    height: 200
+  });
+  assert.ok(resCrop.metadata.width >= 1);
+  assert.ok(resCrop.metadata.height >= 1);
+
+  // Negative coordinates for circle crop
+  const resCircle = await processSingleFilter(input, "circle_crop", {
+    centerX: -50,
+    centerY: -50,
+    radius: 300
+  });
+  assert.ok(resCircle.metadata.width >= 1);
+  assert.ok(resCircle.metadata.height >= 1);
+});
+
+test("image-engine: targetFormat 'avif' encodes image as AVIF", async () => {
+  const input = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mNk+M9QzwAEjDAGBgYACzkCAVdKjJgAAAAASUVORK5CYII=";
+  const res = await processSingleFilter(input, "grayscale_image", {}, "avif");
+  assert.equal(res.metadata.format, "heif"); // sharp/libvips reports AVIF format as 'heif'
+  assert.ok(res.imageBase64.startsWith("data:image/avif;base64,"));
+});
+
+test("image-engine: applyNoise executes without errors", async () => {
+  const input = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mNk+M9QzwAEjDAGBgYACzkCAVdKjJgAAAAASUVORK5CYII=";
+  const res = await processSingleFilter(input, "add_noise", { intensity: 50 });
+  assert.ok(res.imageBase64.length > 0);
+});
+
+

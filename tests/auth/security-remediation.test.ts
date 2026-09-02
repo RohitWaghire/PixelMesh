@@ -570,3 +570,23 @@ test("sec-remediation: worker reconciles high-res (>20MB) images to 5 credits du
   const finalKey = await keyStore.findKeyByFingerprint(agent.fingerprint);
   assert.equal(finalKey?.creditsBalance, 15, "Final balance must reflect 5 total credits deducted");
 });
+
+test("sec-remediation: checkRateLimit self-heals missing TTL on subsequent counter increments", async () => {
+  const { getRedisClient } = await import("@/lib/redis/client");
+  const redisClient = getRedisClient();
+
+  // Simulate a counter that was created without a TTL (e.g., initial EXPIRE failed)
+  await redisClient.set("pixelmesh:ratelimit:heal-test-ip", "2", "EX", 0); // No TTL
+  const initialTtl = await redisClient.ttl("pixelmesh:ratelimit:heal-test-ip");
+  assert.ok(initialTtl <= 0, "Counter starts with no TTL");
+
+  // Call checkRateLimit
+  const res = await checkRateLimit("heal-test-ip", 10, 60);
+  assert.equal(res.allowed, true);
+  assert.equal(res.remaining, 7); // 10 - 3
+
+  // Verify that TTL was restored and self-healed
+  const healedTtl = await redisClient.ttl("pixelmesh:ratelimit:heal-test-ip");
+  assert.ok(healedTtl > 0, "Counter TTL was restored on subsequent increment");
+});
+

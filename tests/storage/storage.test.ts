@@ -296,6 +296,33 @@ test("storage-s3: configuration and presigned URL generation", async () => {
   assert.equal(uploadResult.headers["Content-Type"], "image/jpeg");
 });
 
+test("storage-s3: includes temporary AWS session credentials when signing URLs", async () => {
+  const envKeys = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"] as const;
+  const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+
+  try {
+    process.env.AWS_ACCESS_KEY_ID = "ASIA_TEST_KEY";
+    process.env.AWS_SECRET_ACCESS_KEY = "SECRET_KEY_123";
+    process.env.AWS_SESSION_TOKEN = "SESSION_TOKEN_123";
+
+    const adapter = new S3StorageAdapter({
+      s3Bucket: "temporary-credentials-bucket",
+      s3Region: "us-east-1"
+    });
+    const uploadResult = await adapter.getUploadUrl("raw/test.png", "image/png", 600);
+
+    assert.match(uploadResult.uploadUrl, /X-Amz-Security-Token=/);
+  } finally {
+    for (const key of envKeys) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
+    }
+  }
+});
+
 test("storage-s3: fallback and simulated store operations", async () => {
   const adapter = new S3StorageAdapter({
     s3Bucket: "mock-r2-bucket",

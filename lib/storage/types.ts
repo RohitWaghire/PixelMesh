@@ -54,6 +54,7 @@ export interface StorageConfig {
   s3Endpoint?: string;
   s3AccessKeyId?: string;
   s3SecretAccessKey?: string;
+  s3SessionToken?: string;
   cdnBaseUrl?: string;
   localStorageDir?: string;
   maxFileSizeBytes?: number;

@@ -35,7 +35,6 @@ import {
   isNativeModelContext,
   getExecutionHistory,
   clearExecutionHistory,
-  createCustomEvent,
 } from './polyfill';
 import { createStudioWebMCPTools, StudioCanvasAdapter } from './tools';
 
@@ -331,11 +330,38 @@ export function useWebMCP(
     if (isNativeModelContext()) {
       const nativeContext = targetContext as any;
       const controller = abortControllerRef.current;
-      const emitNativeEvent = (type: string, detail: unknown) => {
-        try {
-          targetContext.dispatchEvent(createCustomEvent(type, detail));
-        } catch {
-          // Telemetry must never turn a successful native tool call into a failure.
+      const recordNativeExecution = (
+        detail: ToolExecutedEventDetail | ToolExecutionFailedEventDetail,
+        success: boolean
+      ) => {
+        const toolName = detail.name || 'unknown';
+        const eventType = success ? 'toolexecuted' : 'toolexecutionfailed';
+        const executionError = (detail as ToolExecutionFailedEventDetail).error;
+        const record: WebMCPExecutionRecord = {
+          id: `exec_${detail.timestamp}_${Math.random().toString(36).slice(2, 7)}`,
+          timestamp: detail.timestamp,
+          toolName,
+          params: (detail.params && typeof detail.params === 'object' ? detail.params : {}) as Record<string, unknown>,
+          success,
+          ...(success ? { result: (detail as ToolExecutedEventDetail).result } : {
+            error: executionError instanceof Error
+              ? executionError.message
+              : String(executionError || 'Tool execution failed')
+          }),
+          durationMs: detail.durationMs,
+          caller: detail.caller,
+        };
+
+        setLastEvent({ type: eventType, toolName, timestamp: detail.timestamp, detail });
+        setLastExecutedTool(toolName);
+        setExecutionHistory((previous) => [record, ...previous].slice(0, 50));
+        setActiveCall(null);
+        setActiveCalls((previous) => Math.max(0, previous - 1));
+
+        if (success) {
+          callbacksRef.current.onToolExecuted?.(detail as ToolExecutedEventDetail);
+        } else {
+          callbacksRef.current.onToolExecutionFailed?.(detail as ToolExecutionFailedEventDetail);
         }
       };
       const nativeToolDefs = toolDefs.map((tool) => ({
@@ -351,24 +377,24 @@ export function useWebMCP(
 
           try {
             const result = await tool.execute(params, options);
-            emitNativeEvent('toolexecuted', {
+            recordNativeExecution({
               name: tool.name,
               params,
               result,
               durationMs: Date.now() - startTime,
               caller,
               timestamp,
-            });
+            }, true);
             return result;
           } catch (error) {
-            emitNativeEvent('toolexecutionfailed', {
+            recordNativeExecution({
               name: tool.name,
               params,
               error,
               durationMs: Date.now() - startTime,
               caller,
               timestamp,
-            });
+            }, false);
             throw error;
           }
         },
@@ -511,14 +537,11 @@ export function useWebMCP(
       const handleToolChange = () => {
         void readRegisteredTools(targetContext).then(setTools);
       };
+      if (typeof targetContext.addEventListener !== 'function') return;
       targetContext.addEventListener(nativeEvent, handleToolChange);
-      targetContext.addEventListener('toolexecuted', handleToolExecuted);
-      targetContext.addEventListener('toolexecutionfailed', handleToolExecutionFailed);
 
       return () => {
         targetContext.removeEventListener(nativeEvent, handleToolChange);
-        targetContext.removeEventListener('toolexecuted', handleToolExecuted);
-        targetContext.removeEventListener('toolexecutionfailed', handleToolExecutionFailed);
       };
     }
 

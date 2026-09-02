@@ -48,6 +48,7 @@ export class S3StorageAdapter implements StorageAdapter {
   private endpoint?: string;
   private accessKeyId?: string;
   private secretAccessKey?: string;
+  private sessionToken?: string;
   private cdnBaseUrl?: string;
   private defaultExpiresInSeconds: number;
   private customClient: any;
@@ -60,6 +61,7 @@ export class S3StorageAdapter implements StorageAdapter {
     this.endpoint = config?.s3Endpoint || process.env.S3_ENDPOINT;
     this.accessKeyId = config?.s3AccessKeyId || process.env.S3_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID;
     this.secretAccessKey = config?.s3SecretAccessKey || process.env.S3_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+    this.sessionToken = config?.s3SessionToken || process.env.S3_SESSION_TOKEN || process.env.AWS_SESSION_TOKEN;
     this.cdnBaseUrl = config?.cdnBaseUrl || process.env.CDN_BASE_URL;
     this.defaultExpiresInSeconds = config?.defaultExpiresInSeconds || 900;
     this.customClient = config?.s3Client;
@@ -86,7 +88,8 @@ export class S3StorageAdapter implements StorageAdapter {
         endpoint: this.endpoint,
         credentials: {
           accessKeyId: this.accessKeyId,
-          secretAccessKey: this.secretAccessKey
+          secretAccessKey: this.secretAccessKey,
+          ...(this.sessionToken ? { sessionToken: this.sessionToken } : {})
         },
         forcePathStyle: Boolean(this.endpoint)
       });

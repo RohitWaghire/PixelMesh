@@ -18,6 +18,8 @@ export interface RedisClientInterface {
   get(key: string): Promise<string | null>;
   del(key: string): Promise<number>;
   ttl(key: string): Promise<number>;
+  incr?(key: string): Promise<number>;
+  expire?(key: string, seconds: number): Promise<number>;
   flushall?(): Promise<void>;
   reset?(): void;
   disconnect?(): Promise<void>;
@@ -56,6 +58,29 @@ export class InMemoryRedisClient implements RedisClientInterface {
       return true;
     }
     return false;
+  }
+
+  public async incr(key: string): Promise<number> {
+    const entry = this.store.get(key);
+    if (!entry || this.pruneKeyIfExpired(key, entry)) {
+      this.store.set(key, {
+        value: "1",
+        expiresAtMs: null,
+        createdAtMs: this.getNow()
+      });
+      return 1;
+    }
+    const current = parseInt(entry.value, 10) || 0;
+    const next = current + 1;
+    entry.value = String(next);
+    return next;
+  }
+
+  public async expire(key: string, seconds: number): Promise<number> {
+    const entry = this.store.get(key);
+    if (!entry || this.pruneKeyIfExpired(key, entry)) return 0;
+    entry.expiresAtMs = this.getNow() + seconds * 1000;
+    return 1;
   }
 
   public async set(
@@ -199,6 +224,16 @@ export class UpstashRedisClientAdapter implements RedisClientInterface {
     return typeof res === "number" ? res : -2;
   }
 
+  public async incr(key: string): Promise<number> {
+    const res = await this.client.incr(key);
+    return typeof res === "number" ? res : parseInt(res, 10) || 1;
+  }
+
+  public async expire(key: string, seconds: number): Promise<number> {
+    const res = await this.client.expire(key, seconds);
+    return typeof res === "number" ? res : res ? 1 : 0;
+  }
+
   public async flushall(): Promise<void> {
     if (typeof this.client.flushall === "function") {
       await this.client.flushall();
@@ -246,6 +281,16 @@ export class IORedisClientAdapter implements RedisClientInterface {
   public async ttl(key: string): Promise<number> {
     const res = await this.client.ttl(key);
     return typeof res === "number" ? res : -2;
+  }
+
+  public async incr(key: string): Promise<number> {
+    const res = await this.client.incr(key);
+    return typeof res === "number" ? res : parseInt(res, 10) || 1;
+  }
+
+  public async expire(key: string, seconds: number): Promise<number> {
+    const res = await this.client.expire(key, seconds);
+    return typeof res === "number" ? res : res ? 1 : 0;
   }
 
   public async flushall(): Promise<void> {

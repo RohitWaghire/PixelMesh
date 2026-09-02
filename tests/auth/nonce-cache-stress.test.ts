@@ -216,11 +216,12 @@ test("adversarial: clock skew sub-second precision, exact boundaries, and numeri
   assert.equal(resFuture.valid, false, "Futuristic timestamp should be rejected");
 
   // 5. Boundary: exactly 60.0s drift -> Valid
-  const resBoundPast = await cache.checkAndRecord(generateNonce("bound-past"), now - 60);
+  const currentNow = memoryClient.getNowSeconds ? memoryClient.getNowSeconds() : getNowSeconds();
+  const resBoundPast = await cache.checkAndRecord(generateNonce("bound-past"), currentNow - 60);
   assert.equal(resBoundPast.valid, true, "Drift of exactly 60s past should be accepted");
 
   // 6. Boundary: 60.1s drift -> Rejected
-  const resBoundOver = await cache.checkAndRecord(generateNonce("bound-over"), now - 60.1);
+  const resBoundOver = await cache.checkAndRecord(generateNonce("bound-over"), currentNow - 60.1);
   assert.equal(resBoundOver.valid, false, "Drift of 60.1s past should be rejected");
 });
 

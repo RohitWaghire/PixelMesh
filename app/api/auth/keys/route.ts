@@ -9,25 +9,32 @@ import { nonceCache } from "@/lib/auth/nonce-cache";
  * NEVER returns private keys.
  */
 export async function GET() {
-  const allKeys = await keyStore.listKeys();
-  
-  // Sanitize to ensure only public fields are exposed
-  const publicKeys = allKeys.map(k => ({
-    fingerprint: k.fingerprint,
-    agentName: k.agentName,
-    publicKeyPem: k.publicKeyPem,
-    algorithm: k.algorithm,
-    creditsBalance: k.creditsBalance,
-    scopes: k.scopes,
-    totalInvocations: k.totalInvocations,
-    status: k.status,
-    createdAt: k.createdAt,
-    lastUsedAt: k.lastUsedAt
-  }));
+  try {
+    const allKeys = await keyStore.listKeys();
+    
+    // Sanitize to ensure only public fields are exposed
+    const publicKeys = allKeys.map(k => ({
+      fingerprint: k.fingerprint,
+      agentName: k.agentName,
+      publicKeyPem: k.publicKeyPem,
+      algorithm: k.algorithm,
+      creditsBalance: k.creditsBalance,
+      scopes: k.scopes,
+      totalInvocations: k.totalInvocations,
+      status: k.status,
+      createdAt: k.createdAt,
+      lastUsedAt: k.lastUsedAt
+    }));
 
-  return NextResponse.json({
-    keys: publicKeys
-  });
+    return NextResponse.json({
+      keys: publicKeys
+    });
+  } catch (err: any) {
+    console.error("[AuthKeys] Error listing keys:", err);
+    return NextResponse.json({
+      error: "Internal server error: Failed to retrieve authorized keys."
+    }, { status: 500 });
+  }
 }
 
 /**
@@ -60,7 +67,7 @@ export async function POST(req: NextRequest) {
     }
 
     const timestampNum = parseInt(timestampStr, 10);
-    const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum);
+    const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum, callerFingerprint);
     if (!nonceCheck.valid) {
       return NextResponse.json({
         error: `Unauthorized: ${nonceCheck.reason}`
@@ -115,6 +122,7 @@ export async function POST(req: NextRequest) {
     }, { status: 403 });
 
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    console.error("[AuthKeys] Error handling key action:", err);
+    return NextResponse.json({ error: "Internal server error: Key operation failed." }, { status: 500 });
   }
 }

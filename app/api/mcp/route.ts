@@ -64,8 +64,8 @@ export async function POST(req: NextRequest) {
   const nowSec = Math.floor(Date.now() / 1000);
   const driftMs = (nowSec - timestampNum) * 1000;
 
-  // 2. Anti-Replay and Clock Skew Check via Distributed Nonce Cache
-  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum);
+  // 2. Anti-Replay and Clock Skew Check via Distributed Nonce Cache (namespaced by fingerprint)
+  const nonceCheck = await nonceCache.checkAndRecord(nonce, timestampNum, fingerprint);
   if (!nonceCheck.valid) {
     await telemetryStore.addLog({
       timestamp: new Date().toISOString(),

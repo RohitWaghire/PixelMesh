@@ -47,6 +47,11 @@ function serializeToolArguments(params: Record<string, any>): Record<string, any
   return JSON.parse(JSON.stringify(params || {}));
 }
 
+function isArgumentSerializationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /serializ|json\s*(string|encoded)|expected.*string|must be a string/i.test(message);
+}
+
 export interface WebMCPActiveCall {
   toolName: string;
   params: Record<string, any>;
@@ -614,11 +619,21 @@ export function useWebMCP(
               const nativeTools = await readRegisteredTools(targetContext);
               const tool = nativeTools.find((candidate) => candidate.name === toolName);
               if (!tool) throw new Error(`Tool "${toolName}" is not registered on document.modelContext`);
-              return (targetContext as any).executeTool(tool, serializedParams, {
+              const options = {
                 caller,
                 signal: callOptions?.signal,
                 context: callOptions?.context,
-              });
+              };
+
+              try {
+                // The current WebMCP draft uses a structured argument object.
+                return await (targetContext as any).executeTool(tool, serializedParams, options);
+              } catch (error) {
+                // A few early native hosts accepted a JSON string instead. Retry
+                // only for an explicit serialization-contract rejection.
+                if (!isArgumentSerializationError(error)) throw error;
+                return (targetContext as any).executeTool(tool, JSON.stringify(serializedParams), options);
+              }
             })()
           : await targetContext.executeTool(toolName, params, {
               caller,

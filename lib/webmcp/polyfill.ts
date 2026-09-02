@@ -183,15 +183,16 @@ export function validateToolDefinition<TParams = any, TResult = any>(
   }
 
   // 4. Tool Parameter Schema Validation (<150 chars per property)
-  if (tool.parameters !== undefined) {
-    if (typeof tool.parameters !== "object" || tool.parameters === null) {
+  const inputSchema = tool.inputSchema ?? tool.parameters;
+  if (inputSchema !== undefined) {
+    if (typeof inputSchema !== "object" || inputSchema === null) {
       throw new TypeError(`Tool "${tool.name}" parameters must be a valid JSON Schema object`);
     }
-    if (tool.parameters.type !== "object") {
+    if (inputSchema.type !== "object") {
       throw new TypeError(`Tool "${tool.name}" parameters.type must be "object"`);
     }
-    if (tool.parameters.properties && typeof tool.parameters.properties === "object") {
-      validatePropertyDescriptions(tool.parameters.properties, tool.name);
+    if (inputSchema.properties && typeof inputSchema.properties === "object") {
+      validatePropertyDescriptions(inputSchema.properties, tool.name);
     }
   }
 }
@@ -518,7 +519,7 @@ export class ModelContextPolyfill extends EventTarget implements ModelContext {
     let validatedParams: TParams = params;
     try {
       validatedParams = validateAndApplyParameters<TParams>(
-        tool.parameters,
+        tool.inputSchema ?? tool.parameters,
         params as Record<string, unknown>,
         name
       );
@@ -659,7 +660,8 @@ export function analyzeToolBudget(tool: ModelContextTool): ToolBudgetAnalysis {
   }> = [];
   let allParamsOk = true;
 
-  if (tool.parameters && tool.parameters.properties) {
+  const inputSchema = tool.inputSchema ?? tool.parameters;
+  if (inputSchema && inputSchema.properties) {
     const inspectProps = (props: Record<string, ToolPropertyDefinition>, prefix = "") => {
       for (const [propName, propDef] of Object.entries(props)) {
         const fullPropName = prefix ? `${prefix}.${propName}` : propName;
@@ -681,7 +683,7 @@ export function analyzeToolBudget(tool: ModelContextTool): ToolBudgetAnalysis {
         }
       }
     };
-    inspectProps(tool.parameters.properties);
+    inspectProps(inputSchema.properties);
   }
 
   return {

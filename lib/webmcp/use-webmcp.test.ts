@@ -759,6 +759,65 @@ describe("PixelMesh WebMCP React Hook & Studio Integration Suite", { concurrency
 
       harness.unmount();
     });
+
+    it("6.4 native simulator retries serialized arguments and clears activity state on completion", async () => {
+      const nativeTools: any[] = [];
+      const nativeContext: any = new EventTarget();
+      nativeContext.registerTool = (tool: any) => {
+        nativeTools.push(tool);
+        return Promise.resolve(tool);
+      };
+      nativeContext.getTools = () => Promise.resolve(nativeTools);
+      nativeContext.executeTool = async (tool: any, params: unknown, options: unknown) => {
+        if (typeof params !== "string") {
+          throw new TypeError("Arguments must be a JSON string");
+        }
+        return tool.execute(JSON.parse(params), options);
+      };
+
+      const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+      const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+
+      try {
+        Object.defineProperty(globalThis, "document", {
+          value: { modelContext: nativeContext },
+          configurable: true,
+          writable: true,
+        });
+        Object.defineProperty(globalThis, "window", {
+          value: {},
+          configurable: true,
+          writable: true,
+        });
+
+        const harness = renderHook(
+          () => useWebMCP(mockAdapter, { autoRegister: true, context: nativeContext }),
+          {}
+        );
+        const result = await harness.result.current.simulateAgentCall("set_comparison_slider", {
+          position: 65,
+        });
+
+        assert.equal(result.success, true);
+        assert.equal(mockAdapter.sliderPos, 65);
+        assert.equal(harness.result.current.activeCall, null);
+        assert.equal(harness.result.current.activeCalls, 0);
+        assert.equal(harness.result.current.executionHistory[0].success, true);
+
+        harness.unmount();
+      } finally {
+        if (originalDocument) {
+          Object.defineProperty(globalThis, "document", originalDocument);
+        } else {
+          delete (globalThis as any).document;
+        }
+        if (originalWindow) {
+          Object.defineProperty(globalThis, "window", originalWindow);
+        } else {
+          delete (globalThis as any).window;
+        }
+      }
+    });
   });
 
   // --------------------------------------------------------------------------

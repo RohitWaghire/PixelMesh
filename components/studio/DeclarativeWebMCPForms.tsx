@@ -7,6 +7,11 @@ declare module "react" {
   interface FormHTMLAttributes<T> extends React.HTMLAttributes<T> {
     toolname?: string;
     tooldescription?: string;
+    toolautosubmit?: boolean;
+  }
+
+  interface HTMLAttributes<T> {
+    toolparamdescription?: string;
   }
 }
 
@@ -77,20 +82,21 @@ export default function DeclarativeWebMCPForms({ context }: DeclarativeWebMCPFor
       <form
         toolname="apply_filter"
         tooldescription="Applies a photographic filter from the PixelMesh catalog to the active canvas image with configurable parameters."
+        toolautosubmit
         onSubmit={handleDeclarativeSubmit}
       >
         <input
           name="tool"
           type="text"
           required
-          data-description="Filter tool identifier from the PixelMesh catalog (e.g. make_sepia_tone, change_exposure, glow_effect)."
+          toolparamdescription="Filter tool identifier from the PixelMesh catalog (e.g. make_sepia_tone, change_exposure, glow_effect)."
         />
         <input
           name="params"
           type="text"
-          data-description="JSON dictionary of numeric or string parameter arguments matching the filter parameter controls."
+          toolparamdescription="JSON dictionary of numeric or string parameter arguments matching the filter parameter controls."
         />
-        <select name="output_format" data-description="Desired output image format ('png', 'jpeg', or 'webp').">
+        <select name="output_format" toolparamdescription="Desired output image format ('png', 'jpeg', or 'webp').">
           <option value="png">png</option>
           <option value="jpeg">jpeg</option>
           <option value="webp">webp</option>
@@ -102,6 +108,7 @@ export default function DeclarativeWebMCPForms({ context }: DeclarativeWebMCPFor
       <form
         toolname="crop_canvas"
         tooldescription="Crops the active canvas image to a specified rectangular region (left, top, width, height) in pixels."
+        toolautosubmit
         onSubmit={handleDeclarativeSubmit}
       >
         <input
@@ -109,28 +116,28 @@ export default function DeclarativeWebMCPForms({ context }: DeclarativeWebMCPFor
           type="number"
           min={0}
           defaultValue={0}
-          data-description="X-coordinate in pixels of the crop region origin top-left corner."
+          toolparamdescription="X-coordinate in pixels of the crop region origin top-left corner."
         />
         <input
           name="top"
           type="number"
           min={0}
           defaultValue={0}
-          data-description="Y-coordinate in pixels of the crop region origin top-left corner."
+          toolparamdescription="Y-coordinate in pixels of the crop region origin top-left corner."
         />
         <input
           name="width"
           type="number"
           min={1}
           required
-          data-description="Width in pixels of the cropped rectangular region."
+          toolparamdescription="Width in pixels of the cropped rectangular region."
         />
         <input
           name="height"
           type="number"
           min={1}
           required
-          data-description="Height in pixels of the cropped rectangular region."
+          toolparamdescription="Height in pixels of the cropped rectangular region."
         />
         <button type="submit">Crop Canvas</button>
       </form>
@@ -139,15 +146,16 @@ export default function DeclarativeWebMCPForms({ context }: DeclarativeWebMCPFor
       <form
         toolname="build_filter_pipeline"
         tooldescription="Executes an atomic multi-step filter pipeline on the active canvas image in sequential order."
+        toolautosubmit
         onSubmit={handleDeclarativeSubmit}
       >
         <input
           name="operations"
           type="text"
           required
-          data-description="Array of filter step operations (1 to 5 items) to execute sequentially on the active image."
+          toolparamdescription="Array of filter step operations (1 to 5 items) to execute sequentially on the active image."
         />
-        <select name="output_format" data-description="Desired output image format ('png', 'jpeg', or 'webp').">
+        <select name="output_format" toolparamdescription="Desired output image format ('png', 'jpeg', or 'webp').">
           <option value="png">png</option>
           <option value="jpeg">jpeg</option>
           <option value="webp">webp</option>
@@ -159,13 +167,14 @@ export default function DeclarativeWebMCPForms({ context }: DeclarativeWebMCPFor
       <form
         toolname="inspect_image"
         tooldescription="Inspects the active canvas image metadata (dimensions, format, channels, color space, size, and pipeline history)."
+        toolautosubmit
         onSubmit={handleDeclarativeSubmit}
       >
         <input
           name="include_history"
           type="checkbox"
           defaultChecked
-          data-description="Whether to include the full chronological array of pipeline filter operations."
+          toolparamdescription="Whether to include the full chronological array of pipeline filter operations."
         />
         <button type="submit">Inspect Image</button>
       </form>
@@ -174,6 +183,7 @@ export default function DeclarativeWebMCPForms({ context }: DeclarativeWebMCPFor
       <form
         toolname="load_preset_image"
         tooldescription="Loads a sample photography preset or custom remote image URL into the visual studio canvas."
+        toolautosubmit
         onSubmit={handleDeclarativeSubmit}
       >
         <input
@@ -181,12 +191,12 @@ export default function DeclarativeWebMCPForms({ context }: DeclarativeWebMCPFor
           type="number"
           min={0}
           max={2}
-          data-description="Index of standard sample photo (0: Neon Cyberpunk, 1: Golden Hour, 2: Architectural Studio)."
+          toolparamdescription="Index of standard sample photo (0: Neon Cyberpunk, 1: Golden Hour, 2: Architectural Studio)."
         />
         <input
           name="image_url"
           type="url"
-          data-description="Direct HTTP/HTTPS URL of an external image to load into the canvas."
+          toolparamdescription="Direct HTTP/HTTPS URL of an external image to load into the canvas."
         />
         <button type="submit">Load Preset Image</button>
       </form>
@@ -195,6 +205,7 @@ export default function DeclarativeWebMCPForms({ context }: DeclarativeWebMCPFor
       <form
         toolname="set_comparison_slider"
         tooldescription="Adjusts the visual before/after split comparison slider position (0-100) and canvas zoom level (0.5-3.0)."
+        toolautosubmit
         onSubmit={handleDeclarativeSubmit}
       >
         <input
@@ -204,7 +215,7 @@ export default function DeclarativeWebMCPForms({ context }: DeclarativeWebMCPFor
           max={100}
           defaultValue={50}
           required
-          data-description="Percentage position (0-100) for the before/after split divider line."
+          toolparamdescription="Percentage position (0-100) for the before/after split divider line."
         />
         <input
           name="zoom"
@@ -212,7 +223,7 @@ export default function DeclarativeWebMCPForms({ context }: DeclarativeWebMCPFor
           min={0.5}
           max={3.0}
           step={0.1}
-          data-description="Visual magnification zoom multiplier for the canvas viewport (0.5 to 3.0)."
+          toolparamdescription="Visual magnification zoom multiplier for the canvas viewport (0.5 to 3.0)."
         />
         <button type="submit">Set Comparison Slider</button>
       </form>
@@ -221,11 +232,12 @@ export default function DeclarativeWebMCPForms({ context }: DeclarativeWebMCPFor
       <form
         toolname="undo_canvas_action"
         tooldescription="Reverts the most recent canvas filter operation or resets the canvas back to the original source image."
+        toolautosubmit
         onSubmit={handleDeclarativeSubmit}
       >
         <select
           name="action"
-          data-description="Undo mode: 'undo_last' removes only the most recent step; 'reset_all' reverts to original source."
+          toolparamdescription="Undo mode: 'undo_last' removes only the most recent step; 'reset_all' reverts to original source."
         >
           <option value="undo_last">undo_last</option>
           <option value="reset_all">reset_all</option>
@@ -237,11 +249,12 @@ export default function DeclarativeWebMCPForms({ context }: DeclarativeWebMCPFor
       <form
         toolname="export_canvas_image"
         tooldescription="Exports the current canvas image as a base64 data URI with configurable format and compression quality."
+        toolautosubmit
         onSubmit={handleDeclarativeSubmit}
       >
         <select
           name="format"
-          data-description="Compression and encoding format for the exported image ('png', 'jpeg', or 'webp')."
+          toolparamdescription="Compression and encoding format for the exported image ('png', 'jpeg', or 'webp')."
         >
           <option value="png">png</option>
           <option value="jpeg">jpeg</option>
@@ -253,7 +266,7 @@ export default function DeclarativeWebMCPForms({ context }: DeclarativeWebMCPFor
           min={1}
           max={100}
           defaultValue={90}
-          data-description="Compression quality percentage between 1 and 100."
+          toolparamdescription="Compression quality percentage between 1 and 100."
         />
         <button type="submit">Export Canvas Image</button>
       </form>

@@ -38,6 +38,20 @@ import {
 } from './polyfill';
 import { createStudioWebMCPTools, StudioCanvasAdapter } from './tools';
 
+async function readRegisteredTools(context: ModelContext): Promise<RegisteredTool[]> {
+  const result = (context as any).getTools();
+  return Array.isArray(result) ? result : await result;
+}
+
+function serializeToolArguments(params: Record<string, any>): Record<string, any> {
+  return JSON.parse(JSON.stringify(params || {}));
+}
+
+function isArgumentSerializationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /serializ|json\s*(string|encoded)|expected.*string|must be a string/i.test(message);
+}
+
 export interface WebMCPActiveCall {
   toolName: string;
   params: Record<string, any>;
@@ -222,7 +236,7 @@ export function useWebMCP(
     if (registeredHandlesRef.current.length > 0) {
       for (const handle of registeredHandlesRef.current) {
         try {
-          handle.unregister();
+          handle.unregister?.();
         } catch {
           // Safe guard
         }
@@ -245,7 +259,7 @@ export function useWebMCP(
     if (registeredHandlesRef.current.length > 0) {
       for (const handle of registeredHandlesRef.current) {
         try {
-          handle.unregister();
+          handle.unregister?.();
         } catch {
           // Safe guard
         }
@@ -319,6 +333,105 @@ export function useWebMCP(
     };
 
     const toolDefs = createStudioWebMCPTools(proxyAdapter);
+
+    // Native WebMCP registration is promise-based and is cancelled through
+    // the registration AbortSignal. The local polyfill remains synchronous.
+    if (isNativeModelContext()) {
+      const nativeContext = targetContext as any;
+      const controller = abortControllerRef.current;
+      const recordNativeExecution = (
+        detail: ToolExecutedEventDetail | ToolExecutionFailedEventDetail,
+        success: boolean
+      ) => {
+        const toolName = detail.name || 'unknown';
+        const eventType = success ? 'toolexecuted' : 'toolexecutionfailed';
+        const executionError = (detail as ToolExecutionFailedEventDetail).error;
+        const record: WebMCPExecutionRecord = {
+          id: `exec_${detail.timestamp}_${Math.random().toString(36).slice(2, 7)}`,
+          timestamp: detail.timestamp,
+          toolName,
+          params: (detail.params && typeof detail.params === 'object' ? detail.params : {}) as Record<string, unknown>,
+          success,
+          ...(success ? { result: (detail as ToolExecutedEventDetail).result } : {
+            error: executionError instanceof Error
+              ? executionError.message
+              : String(executionError || 'Tool execution failed')
+          }),
+          durationMs: detail.durationMs,
+          caller: detail.caller,
+        };
+
+        setLastEvent({ type: eventType, toolName, timestamp: detail.timestamp, detail });
+        setLastExecutedTool(toolName);
+        setExecutionHistory((previous) => [record, ...previous].slice(0, 50));
+        setActiveCall(null);
+        if (!detail.caller?.startsWith('simulator:')) {
+          setActiveCalls((previous) => Math.max(0, previous - 1));
+        }
+
+        if (success) {
+          callbacksRef.current.onToolExecuted?.(detail as ToolExecutedEventDetail);
+        } else {
+          callbacksRef.current.onToolExecutionFailed?.(detail as ToolExecutionFailedEventDetail);
+        }
+      };
+      const nativeToolDefs = toolDefs.map((tool) => ({
+        ...tool,
+        execute: async (params: any, options?: ToolExecuteCallbackOptions) => {
+          const timestamp = Date.now();
+          const startTime = Date.now();
+          const caller = options?.caller;
+          if (!caller?.startsWith('simulator:')) {
+            setActiveCall({ toolName: tool.name, params: params || {}, startTime, caller });
+            setActiveCalls((previous) => previous + 1);
+          }
+
+          try {
+            const result = await tool.execute(params, options);
+            recordNativeExecution({
+              name: tool.name,
+              params,
+              result,
+              durationMs: Date.now() - startTime,
+              caller,
+              timestamp,
+            }, true);
+            return result;
+          } catch (error) {
+            recordNativeExecution({
+              name: tool.name,
+              params,
+              error,
+              durationMs: Date.now() - startTime,
+              caller,
+              timestamp,
+            }, false);
+            throw error;
+          }
+        },
+      }));
+
+      setTools(nativeToolDefs as RegisteredTool[]);
+      setRegistered(false);
+      void Promise.all(
+        nativeToolDefs.map((tool) =>
+          Promise.resolve(nativeContext.registerTool(tool, { signal: controller?.signal }))
+        )
+      )
+        .then(async () => {
+          if (abortControllerRef.current !== controller) return;
+          setTools(await readRegisteredTools(targetContext));
+          setRegistered(true);
+        })
+        .catch((error) => {
+          if (abortControllerRef.current !== controller) return;
+          console.warn('[WebMCP] Native tool registration failed:', error);
+          setTools([]);
+          setRegistered(false);
+        });
+      return nativeToolDefs as RegisteredTool[];
+    }
+
     const registeredList = toolDefs.map((tool) => targetContext.registerTool(tool));
 
     registeredHandlesRef.current = registeredList;
@@ -332,6 +445,7 @@ export function useWebMCP(
   useEffect(() => {
     const targetContext = getTargetContext();
     if (!targetContext) return;
+    const nativeHost = isNativeModelContext();
 
     const handleToolRegistered = (e: Event) => {
       const customEvent = e as CustomEvent<ToolRegisteredEventDetail>;
@@ -343,7 +457,7 @@ export function useWebMCP(
         detail: customEvent.detail,
       };
       setLastEvent(eventObj);
-      setTools(targetContext.getTools());
+      void readRegisteredTools(targetContext).then(setTools);
       callbacksRef.current.onToolRegistered?.(tool);
     };
 
@@ -357,7 +471,7 @@ export function useWebMCP(
         detail: customEvent.detail,
       };
       setLastEvent(eventObj);
-      setTools(targetContext.getTools());
+      void readRegisteredTools(targetContext).then(setTools);
       callbacksRef.current.onToolUnregistered?.(name);
     };
 
@@ -373,7 +487,23 @@ export function useWebMCP(
       };
       setLastEvent(eventObj);
       setLastExecutedTool(toolName);
-      setExecutionHistory(getExecutionHistory());
+      if (nativeHost) {
+        setExecutionHistory((previous) => [
+          {
+            id: `exec_${detail?.timestamp || Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            timestamp: detail?.timestamp || Date.now(),
+            toolName,
+            params: (detail?.params && typeof detail.params === 'object' ? detail.params : {}) as Record<string, unknown>,
+            success: true,
+            result: detail?.result,
+            durationMs: detail?.durationMs || 0,
+            caller: detail?.caller,
+          },
+          ...previous,
+        ].slice(0, 50));
+      } else {
+        setExecutionHistory(getExecutionHistory());
+      }
       setActiveCall(null);
       setActiveCalls((prev) => Math.max(0, prev - 1));
       callbacksRef.current.onToolExecuted?.(detail);
@@ -391,11 +521,40 @@ export function useWebMCP(
       };
       setLastEvent(eventObj);
       setLastExecutedTool(toolName);
-      setExecutionHistory(getExecutionHistory());
+      if (nativeHost) {
+        setExecutionHistory((previous) => [
+          {
+            id: `exec_${detail?.timestamp || Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            timestamp: detail?.timestamp || Date.now(),
+            toolName,
+            params: (detail?.params && typeof detail.params === 'object' ? detail.params : {}) as Record<string, unknown>,
+            success: false,
+            error: detail?.error instanceof Error ? detail.error.message : String(detail?.error || 'Tool execution failed'),
+            durationMs: detail?.durationMs || 0,
+            caller: detail?.caller,
+          },
+          ...previous,
+        ].slice(0, 50));
+      } else {
+        setExecutionHistory(getExecutionHistory());
+      }
       setActiveCall(null);
       setActiveCalls((prev) => Math.max(0, prev - 1));
       callbacksRef.current.onToolExecutionFailed?.(detail);
     };
+
+    const nativeEvent = isNativeModelContext() ? 'toolchange' : null;
+    if (nativeEvent) {
+      const handleToolChange = () => {
+        void readRegisteredTools(targetContext).then(setTools);
+      };
+      if (typeof targetContext.addEventListener !== 'function') return;
+      targetContext.addEventListener(nativeEvent, handleToolChange);
+
+      return () => {
+        targetContext.removeEventListener(nativeEvent, handleToolChange);
+      };
+    }
 
     targetContext.addEventListener('toolregistered', handleToolRegistered);
     targetContext.addEventListener('toolunregistered', handleToolUnregistered);
@@ -451,12 +610,36 @@ export function useWebMCP(
       setActiveCalls((prev) => prev + 1);
       setIsSimulating(true);
 
+      let native = false;
       try {
-        const result = await targetContext.executeTool(toolName, params, {
-          caller,
-          signal: callOptions?.signal,
-          context: callOptions?.context,
-        });
+        native = isNativeModelContext();
+        const serializedParams = serializeToolArguments(params);
+        const result = native
+          ? await (async () => {
+              const nativeTools = await readRegisteredTools(targetContext);
+              const tool = nativeTools.find((candidate) => candidate.name === toolName);
+              if (!tool) throw new Error(`Tool "${toolName}" is not registered on document.modelContext`);
+              const options = {
+                caller,
+                signal: callOptions?.signal,
+                context: callOptions?.context,
+              };
+
+              try {
+                // The current WebMCP draft uses a structured argument object.
+                return await (targetContext as any).executeTool(tool, serializedParams, options);
+              } catch (error) {
+                // A few early native hosts accepted a JSON string instead. Retry
+                // only for an explicit serialization-contract rejection.
+                if (!isArgumentSerializationError(error)) throw error;
+                return (targetContext as any).executeTool(tool, JSON.stringify(serializedParams), options);
+              }
+            })()
+          : await targetContext.executeTool(toolName, params, {
+              caller,
+              signal: callOptions?.signal,
+              context: callOptions?.context,
+            });
 
         const durationMs = Math.round(
           (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0
@@ -478,6 +661,10 @@ export function useWebMCP(
           durationMs,
         };
       } finally {
+        if (native) {
+          setActiveCall(null);
+          setActiveCalls((previous) => Math.max(0, previous - 1));
+        }
         setIsSimulating(false);
       }
     },

@@ -204,6 +204,12 @@ export interface ModelContextTool<TParams = any, TResult = any> {
   /**
    * JSON Schema parameter definition adhering to parameter character budgets (< 150 chars).
    */
+  inputSchema?: ToolParameterSchema;
+
+  /**
+   * Internal compatibility alias used by the local polyfill and simulator.
+   * Native WebMCP hosts consume inputSchema.
+   */
   parameters?: ToolParameterSchema;
 
   /**
@@ -230,6 +236,16 @@ export interface ModelContextTool<TParams = any, TResult = any> {
   destructiveHint?: boolean;
 
   /**
+   * Native WebMCP security annotations.
+   */
+  annotations?: {
+    readOnlyHint?: boolean;
+    untrustedContentHint?: boolean;
+    destructiveHint?: boolean;
+    [key: string]: unknown;
+  };
+
+  /**
    * Arbitrary vendor-specific metadata annotations.
    */
   [key: string]: unknown;
@@ -242,13 +258,13 @@ export interface RegisteredTool<TParams = any, TResult = any> extends ModelConte
   /**
    * Epoch timestamp (in milliseconds) when the tool was registered.
    */
-  registeredAt: number;
+  registeredAt?: number;
 
   /**
    * Unregisters this tool instance from its owning ModelContext.
    * Returns true if successfully unregistered, false if already removed.
    */
-  unregister: () => boolean;
+  unregister?: () => boolean;
 }
 
 // ============================================================================

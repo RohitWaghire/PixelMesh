@@ -43,6 +43,10 @@ async function readRegisteredTools(context: ModelContext): Promise<RegisteredToo
   return Array.isArray(result) ? result : await result;
 }
 
+function serializeToolArguments(params: Record<string, any>): Record<string, any> {
+  return JSON.parse(JSON.stringify(params || {}));
+}
+
 export interface WebMCPActiveCall {
   toolName: string;
   params: Record<string, any>;
@@ -356,7 +360,9 @@ export function useWebMCP(
         setLastExecutedTool(toolName);
         setExecutionHistory((previous) => [record, ...previous].slice(0, 50));
         setActiveCall(null);
-        setActiveCalls((previous) => Math.max(0, previous - 1));
+        if (!detail.caller?.startsWith('simulator:')) {
+          setActiveCalls((previous) => Math.max(0, previous - 1));
+        }
 
         if (success) {
           callbacksRef.current.onToolExecuted?.(detail as ToolExecutedEventDetail);
@@ -599,14 +605,16 @@ export function useWebMCP(
       setActiveCalls((prev) => prev + 1);
       setIsSimulating(true);
 
+      let native = false;
       try {
-        const native = isNativeModelContext();
+        native = isNativeModelContext();
+        const serializedParams = serializeToolArguments(params);
         const result = native
           ? await (async () => {
               const nativeTools = await readRegisteredTools(targetContext);
               const tool = nativeTools.find((candidate) => candidate.name === toolName);
               if (!tool) throw new Error(`Tool "${toolName}" is not registered on document.modelContext`);
-              return (targetContext as any).executeTool(tool, params, {
+              return (targetContext as any).executeTool(tool, serializedParams, {
                 caller,
                 signal: callOptions?.signal,
                 context: callOptions?.context,
@@ -638,6 +646,10 @@ export function useWebMCP(
           durationMs,
         };
       } finally {
+        if (native) {
+          setActiveCall(null);
+          setActiveCalls((previous) => Math.max(0, previous - 1));
+        }
         setIsSimulating(false);
       }
     },

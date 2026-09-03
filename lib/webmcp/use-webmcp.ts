@@ -48,8 +48,10 @@ function serializeToolArguments(params: Record<string, any>): Record<string, any
 }
 
 function isArgumentSerializationError(error: unknown): boolean {
+  if (!error) return false;
   const message = error instanceof Error ? error.message : String(error || '');
-  return /serializ|json\s*(string|encoded)|expected.*string|must be a string/i.test(message);
+  if (/abort|cancel/i.test(message)) return false;
+  return /parse input arguments|serializ|json\s*(string|encoded)|expected.*string|must be a string/i.test(message);
 }
 
 export interface WebMCPActiveCall {
@@ -633,28 +635,45 @@ export function useWebMCP(
                 context: callOptions?.context,
               };
 
-              // Try calling the native host's executeTool if exposed
+              // If abort signal was already triggered, throw immediately without executing
+              if (callOptions?.signal?.aborted) {
+                const err = new Error("The operation was aborted.");
+                err.name = "AbortError";
+                throw err;
+              }
+
+              // Try calling native host's executeTool if exposed
               if (typeof (targetContext as any).executeTool === 'function') {
                 try {
-                  return await (targetContext as any).executeTool(toolName, serializedParams, options);
-                } catch {
-                  try {
-                    return await (targetContext as any).executeTool(tool, serializedParams, options);
-                  } catch {
+                  return await (targetContext as any).executeTool(tool, serializedParams, options);
+                } catch (error: any) {
+                  // Never retry on abort or cancellation
+                  if (callOptions?.signal?.aborted || error?.name === 'AbortError') {
+                    throw error;
+                  }
+
+                  // Only retry if host explicitly rejected argument serialization before executing
+                  if (isArgumentSerializationError(error)) {
                     try {
-                      return await (targetContext as any).executeTool(toolName, JSON.stringify(serializedParams), options);
-                    } catch {
-                      try {
-                        return await (targetContext as any).executeTool(tool, JSON.stringify(serializedParams), options);
-                      } catch {
-                        // Fall through to callback fallback
+                      return await (targetContext as any).executeTool(tool, JSON.stringify(serializedParams), options);
+                    } catch (retryError: any) {
+                      if (callOptions?.signal?.aborted || retryError?.name === 'AbortError') {
+                        throw retryError;
                       }
+                      // If host still rejects argument serialization before execution, fallback to direct callback
+                      if (isArgumentSerializationError(retryError) && typeof (tool as any)?.execute === 'function') {
+                        return await (tool as any).execute(serializedParams, options);
+                      }
+                      throw retryError;
                     }
                   }
+
+                  // Execution, validation, or adapter errors must not be retried
+                  throw error;
                 }
               }
 
-              // Direct execution fallback through the tool's registered callback
+              // Direct execution fallback if host has no executeTool
               if (typeof (tool as any)?.execute === 'function') {
                 return await (tool as any).execute(serializedParams, options);
               }

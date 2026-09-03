@@ -157,8 +157,9 @@ export default function StudioPlayground() {
         });
       } catch (fetchErr: any) {
         if (fetchErr?.name === "AbortError") throw fetchErr;
-        // Fallback to local /icon.png if remote image fails or is offline
-        const localRes = await fetch("/icon.png", { signal });
+        // Fallback to local /favicon.ico if remote image fails or is offline
+        const localRes = await fetch("/favicon.ico", { signal });
+        if (!localRes.ok) throw new Error(`Failed fetching local fallback: HTTP ${localRes.status}`);
         const localBlob = await localRes.blob();
         base64 = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();

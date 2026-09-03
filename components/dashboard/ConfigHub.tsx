@@ -16,12 +16,18 @@ export default function ConfigHub({
 }: ConfigHubProps) {
   const [copiedTab, setCopiedTab] = useState<string | null>(null);
 
+  const [origin, setOrigin] = useState<string>("");
+
+  React.useEffect(() => {
+    if (typeof window !== "undefined" && window.location.origin) {
+      setOrigin(window.location.origin);
+    }
+  }, []);
+
   // Dynamically resolve server URL based on live deployment origin
   const effectiveServerUrl =
     serverUrl ||
-    (typeof window !== "undefined" && window.location.origin
-      ? `${window.location.origin}/api/mcp`
-      : "https://pixel-mesh-iota.vercel.app/api/mcp");
+    (origin ? `${origin}/api/mcp` : "https://pixel-mesh-iota.vercel.app/api/mcp");
 
   const claudeDesktopConfig = JSON.stringify({
     mcpServers: {

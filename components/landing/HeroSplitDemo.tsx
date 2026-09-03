@@ -48,7 +48,20 @@ export default function HeroSplitDemo() {
   const [sliderPos, setSliderPos] = useState<number>(52);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
+  const [containerWidth, setContainerWidth] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const updateWidth = () => {
+      if (containerRef.current) {
+        setContainerWidth(containerRef.current.clientWidth);
+      }
+    };
+    updateWidth();
+    window.addEventListener("resize", updateWidth);
+    return () => window.removeEventListener("resize", updateWidth);
+  }, []);
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isDragging && e.buttons !== 1) return;
@@ -190,7 +203,7 @@ export default function HeroSplitDemo() {
                 alt="Original preview"
                 className="absolute inset-0 w-full h-full object-cover max-w-none"
                 style={{
-                  width: containerRef.current ? `${containerRef.current.clientWidth}px` : "100%",
+                  width: containerWidth ? `${containerWidth}px` : "100%",
                   height: "100%"
                 }}
               />

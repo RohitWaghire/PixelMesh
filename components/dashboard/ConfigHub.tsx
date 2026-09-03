@@ -10,17 +10,24 @@ interface ConfigHubProps {
 }
 
 export default function ConfigHub({
-  serverUrl = "http://localhost:3000/api/mcp",
+  serverUrl,
   fingerprint = "SHA256:your_agent_key_fingerprint",
   privateKeyPem = "-----BEGIN PRIVATE KEY-----\n..."
 }: ConfigHubProps) {
   const [copiedTab, setCopiedTab] = useState<string | null>(null);
 
+  // Dynamically resolve server URL based on live deployment origin
+  const effectiveServerUrl =
+    serverUrl ||
+    (typeof window !== "undefined" && window.location.origin
+      ? `${window.location.origin}/api/mcp`
+      : "https://pixel-mesh-iota.vercel.app/api/mcp");
+
   const claudeDesktopConfig = JSON.stringify({
     mcpServers: {
       pixelmesh: {
         command: "node",
-        args: ["./scripts/test-agent-client.ts", "--server", serverUrl],
+        args: ["./scripts/test-agent-client.ts", "--server", effectiveServerUrl],
         env: {
           AGENT_FINGERPRINT: fingerprint,
           AGENT_PRIVATE_KEY: privateKeyPem
@@ -35,7 +42,7 @@ export default function ConfigHub({
         {
           name: "pixelmesh-image-mesh",
           type: "http",
-          url: serverUrl,
+          url: effectiveServerUrl,
           headers: {
             "x-agent-key-fingerprint": fingerprint
           }
@@ -62,7 +69,7 @@ headers = {
     "x-agent-nonce": nonce,
     "x-agent-signature": "base64_signature_here"
 }
-response = requests.post("${serverUrl}", data=body, headers=headers)
+response = requests.post("${effectiveServerUrl}", data=body, headers=headers)
 print(response.json())`;
 
   const handleCopy = (text: string, tab: string) => {

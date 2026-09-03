@@ -525,7 +525,7 @@ export default function StudioPlayground() {
     isSimulating,
     simulateAgentCall,
     clearHistory,
-  } = useWebMCP(adapter);
+  } = useWebMCP(adapter, { includeAllFilters: true });
 
   const handleApplyFilter = async () => {
     if (!originalImage) return;

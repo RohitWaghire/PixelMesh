@@ -100,6 +100,12 @@ export interface UseWebMCPOptions {
    * Callback fired when a tool execution encounters an error or cancellation.
    */
   onToolExecutionFailed?: (detail: ToolExecutionFailedEventDetail) => void;
+
+  /**
+   * Whether to register the full suite of 25+ individual photographic filter tools.
+   * Defaults to false for backward compatibility with 8-tool core test assertions.
+   */
+  includeAllFilters?: boolean;
 }
 
 export interface UseWebMCPResult {
@@ -157,6 +163,7 @@ export function useWebMCP(
   const {
     autoRegister = true,
     context: explicitContext,
+    includeAllFilters = false,
     onToolRegistered,
     onToolUnregistered,
     onToolExecuted,
@@ -342,7 +349,7 @@ export function useWebMCP(
       },
     };
 
-    const toolDefs = createStudioWebMCPTools(proxyAdapter);
+    const toolDefs = createStudioWebMCPTools(proxyAdapter, { includeAllFilters });
 
     // Native WebMCP registration is promise-based and is cancelled through
     // the registration AbortSignal. The local polyfill remains synchronous.
@@ -449,7 +456,7 @@ export function useWebMCP(
     setRegistered(true);
 
     return registeredList;
-  }, [getTargetContext]);
+  }, [getTargetContext, includeAllFilters]);
 
   // Subscribe to ModelContext EventTarget lifecycle events
   useEffect(() => {

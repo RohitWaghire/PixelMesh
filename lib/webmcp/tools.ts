@@ -524,13 +524,84 @@ export function createExportCanvasImageTool(adapter: StudioCanvasAdapter): Model
 // ============================================================================
 
 /**
- * Creates an array of all 8 Studio WebMCP tools bound to a StudioCanvasAdapter.
+ * Creates individual WebMCP tool definitions for each filter in FILTER_TOOLS_CATALOG.
+ * Allows agents to call filters directly by name (e.g. make_sepia_tone, rotate_image, adjust_exposure).
+ */
+export function createIndividualFilterTools(adapter: StudioCanvasAdapter): ModelContextTool[] {
+  return FILTER_TOOLS_CATALOG.map((def) => {
+    const properties: Record<string, any> = {};
+    for (const ctrl of def.paramControls) {
+      if (ctrl.type === "slider" || ctrl.type === "number") {
+        properties[ctrl.key] = {
+          type: "number",
+          description: ctrl.label,
+          ...(ctrl.min !== undefined ? { minimum: ctrl.min } : {}),
+          ...(ctrl.max !== undefined ? { maximum: ctrl.max } : {}),
+          default: def.defaultParams[ctrl.key],
+        };
+      } else if (ctrl.type === "select" && ctrl.options) {
+        properties[ctrl.key] = {
+          type: "string",
+          description: ctrl.label,
+          enum: ctrl.options.map((o) => o.value),
+          default: def.defaultParams[ctrl.key],
+        };
+      }
+    }
+
+    const tool: ModelContextTool = {
+      name: def.id,
+      description: `${def.name}: ${def.description}`,
+      readOnlyHint: false,
+      untrustedContentHint: false,
+      destructiveHint: false,
+      parameters: {
+        type: "object",
+        properties,
+      },
+      execute: async (params: Record<string, any> = {}, options) => {
+        return safeExecute(def.id, options, async () => {
+          if (!adapter.getImage() && !adapter.getOriginalImage()) {
+            throw new WebMCPValidationError(`No image is currently loaded to apply ${def.name}`, "image");
+          }
+          if (def.id === "crop_image") {
+            const left = Number(params.left ?? def.defaultParams.left ?? 0);
+            const top = Number(params.top ?? def.defaultParams.top ?? 0);
+            const width = Number(params.width ?? def.defaultParams.width ?? 400);
+            const height = Number(params.height ?? def.defaultParams.height ?? 400);
+            return await adapter.cropImage(left, top, width, height, options?.signal);
+          }
+          return await adapter.applyFilter(def.id, { ...def.defaultParams, ...params }, options?.signal);
+        });
+      },
+    };
+
+    return {
+      ...tool,
+      inputSchema: tool.parameters,
+      annotations: {
+        readOnlyHint: tool.readOnlyHint,
+        untrustedContentHint: tool.untrustedContentHint,
+        destructiveHint: tool.destructiveHint,
+      },
+    };
+  });
+}
+
+/**
+ * Creates an array of Studio WebMCP tools bound to a StudioCanvasAdapter.
+ * Defaults to the 8 core management tools to preserve existing test invariants.
+ * Pass options.includeAllFilters to surface all 25+ individual photographic filter tools.
  * 
  * @param adapter StudioCanvasAdapter implementing canvas state queries and mutations.
+ * @param options Optional flags controlling catalog inclusion.
  * @returns Array of ModelContextTool definitions ready for registration.
  */
-export function createStudioWebMCPTools(adapter: StudioCanvasAdapter): ModelContextTool[] {
-  const tools = [
+export function createStudioWebMCPTools(
+  adapter: StudioCanvasAdapter,
+  options?: { includeAllFilters?: boolean }
+): ModelContextTool[] {
+  const coreTools = [
     createApplyFilterTool(adapter),
     createCropCanvasTool(adapter),
     createBuildFilterPipelineTool(adapter),
@@ -539,10 +610,7 @@ export function createStudioWebMCPTools(adapter: StudioCanvasAdapter): ModelCont
     createSetComparisonSliderTool(adapter),
     createUndoCanvasActionTool(adapter),
     createExportCanvasImageTool(adapter),
-  ];
-
-  // Keep the local simulator's alias while exposing the native WebMCP shape.
-  return tools.map((tool) => ({
+  ].map((tool) => ({
     ...tool,
     inputSchema: tool.parameters,
     annotations: {
@@ -551,19 +619,28 @@ export function createStudioWebMCPTools(adapter: StudioCanvasAdapter): ModelCont
       destructiveHint: tool.destructiveHint,
     },
   }));
+
+  if (options?.includeAllFilters) {
+    const filterTools = createIndividualFilterTools(adapter);
+    return [...coreTools, ...filterTools];
+  }
+
+  return coreTools;
 }
 
 /**
- * Registers all 8 Studio WebMCP tools onto a ModelContext instance (e.g. document.modelContext).
+ * Registers all Studio WebMCP tools onto a ModelContext instance (e.g. document.modelContext).
  * 
  * @param context Target ModelContext instance.
  * @param adapter StudioCanvasAdapter implementing canvas state queries and mutations.
+ * @param options Optional flags controlling catalog inclusion.
  * @returns Array of RegisteredTool handles with unregister() capability.
  */
 export function registerStudioWebMCPTools(
   context: ModelContext,
-  adapter: StudioCanvasAdapter
+  adapter: StudioCanvasAdapter,
+  options?: { includeAllFilters?: boolean }
 ): RegisteredTool[] {
-  const tools = createStudioWebMCPTools(adapter);
+  const tools = createStudioWebMCPTools(adapter, options);
   return tools.map((tool) => context.registerTool(tool));
 }

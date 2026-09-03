@@ -229,6 +229,19 @@ export default function WebMCPSimulatorDrawer({
     setSimulationOutput({ status: "executing", prompt: preset.prompt, steps: [] });
 
     const stepResults: any[] = [];
+
+    // If the plan performs image editing/cropping, ensure an image is loaded
+    const needsImage = preset.plan.some(
+      (s) => s.tool === "apply_filter" || s.tool === "crop_canvas" || s.tool === "build_filter_pipeline"
+    );
+    if (needsImage) {
+      const inspectRes = await onSimulate("inspect_image", { include_history: false }, { caller: "simulator:check" });
+      if (!inspectRes?.result?.hasImage) {
+        const loadRes = await onSimulate("load_preset_image", { preset_index: 0 }, { caller: "simulator:auto-load" });
+        stepResults.push({ tool: "load_preset_image", params: { preset_index: 0 }, result: loadRes });
+      }
+    }
+
     for (const step of preset.plan) {
       const res = await onSimulate(step.tool, step.params, { caller: "simulator:nl-preset" });
       stepResults.push({ tool: step.tool, params: step.params, result: res });
@@ -251,6 +264,19 @@ export default function WebMCPSimulatorDrawer({
     setSimulationOutput({ status: "executing", prompt: customPrompt, plan, steps: [] });
 
     const stepResults: any[] = [];
+
+    // If the custom prompt performs image editing/cropping, ensure an image is loaded
+    const needsImage = plan.some(
+      (s) => s.tool === "apply_filter" || s.tool === "crop_canvas" || s.tool === "build_filter_pipeline"
+    );
+    if (needsImage) {
+      const inspectRes = await onSimulate("inspect_image", { include_history: false }, { caller: "simulator:check" });
+      if (!inspectRes?.result?.hasImage) {
+        const loadRes = await onSimulate("load_preset_image", { preset_index: 0 }, { caller: "simulator:auto-load" });
+        stepResults.push({ tool: "load_preset_image", params: { preset_index: 0 }, result: loadRes });
+      }
+    }
+
     for (const step of plan) {
       const res = await onSimulate(step.tool, step.params, { caller: "simulator:nl-custom" });
       stepResults.push({ tool: step.tool, params: step.params, result: res });
@@ -306,11 +332,11 @@ export default function WebMCPSimulatorDrawer({
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="px-2 py-0.5 font-mono text-[10px] font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 rounded">
+            <span suppressHydrationWarning className="px-2 py-0.5 font-mono text-[10px] font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 rounded">
               {tools.length} Tools Registered
             </span>
 
-            <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 font-mono text-[10px] bg-zinc-800 text-zinc-300 rounded border border-zinc-700">
+            <span suppressHydrationWarning className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 font-mono text-[10px] bg-zinc-800 text-zinc-300 rounded border border-zinc-700">
               {isNative ? "🟢 Chrome 149+ Native" : "⚡ ModelContext Polyfill"}
             </span>
 

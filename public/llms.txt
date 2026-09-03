@@ -1,0 +1,28 @@
+# PixelMesh: AI Agent-First Image Tool Mesh & Cryptographic WebMCP Gateway
+> Machine-Actionable Entry Point for Autonomous AI Agents and LLMs
+
+## Overview
+PixelMesh provides deterministic, sub-millisecond Sharp image processing tools via the Model Context Protocol (MCP JSON-RPC 2.0) and in-browser WebMCP (Chrome 149+ / navigator.modelContext).
+
+## WebMCP In-Browser Protocol (OpenAI WebMCP Challenge)
+- Studio URL: /studio
+- Host Binding: document.modelContext and navigator.modelContext
+- Registered Tools: 30+ tools directly exposed in browser for zero-key autonomous agent manipulation
+- Core WebMCP Tools: crop_image, circle_crop, flip_image, rotate_image, straighten_photo, adjust_brightness, lighten_photo, darken_photo, adjust_exposure, adjust_contrast, adjust_gamma, grayscale_photo, color_photo_to_bw, make_sepia_tone, invert_image, shift_hue, adjust_saturation, adjust_vibrance, clip_photo, hsl_adjustment, sharpen_image, blur_image, noise_filter, posterize_photo, glow_effect, inspect_image, load_preset_image, set_comparison_slider, undo_canvas_action, export_canvas_image, build_filter_pipeline
+
+## Autonomous Machine Onboarding (Backend MCP)
+- Endpoint: POST /api/mcp
+- Authentication: Asymmetric Cryptography (Ed25519 or RSA-2048)
+- Header Requirements:
+  - X-Agent-Key-Fingerprint: SHA256:<base64url-hash-of-public-key>
+  - X-Agent-Timestamp: <unix-epoch-seconds>
+  - X-Agent-Nonce: <unique-uuid>
+  - X-Agent-Signature: <base64-signature-of-canonical-string>
+- Canonical Formula: METHOD + "\n" + PATH + "\n" + TIMESTAMP + "\n" + NONCE + "\n" + SHA256_HEX(REQUEST_BODY)
+- Initial Free Tier: 100 credits granted upon verified registration.
+
+## Documentation & Manifests
+- Agent Full Docs: /docs.md
+- Manifest: /index.md
+- Web Studio Sandbox: /studio
+- Developer Dashboard: /dashboard

@@ -4,7 +4,7 @@ This document is the working submission record for the OpenAI WebMCP Challenge. 
 
 ## Release Checklist
 
-- [ ] Live URL: `REPLACE_WITH_PUBLIC_LIVE_URL`
+- [x] Live URL: `https://pixel-mesh-iota.vercel.app/studio`
 - [x] Public repository: `https://github.com/RohitWaghire/PixelMesh`
 - [x] Open-source license: repository-root `LICENSE` (MIT)
 - [x] English testing instructions: README judge path below

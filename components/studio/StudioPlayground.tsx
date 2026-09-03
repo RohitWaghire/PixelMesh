@@ -48,6 +48,7 @@ export default function StudioPlayground() {
   const [sliderPos, setSliderPos] = useState<number>(50);
   const [zoom, setZoom] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(false);
+  const [mounted, setMounted] = useState<boolean>(false);
   const [metadata, setMetadata] = useState<any>(null);
   const [executionTimeMs, setExecutionTimeMs] = useState<number | undefined>(undefined);
   const [pipelineSteps, setPipelineSteps] = useState<Array<{ tool: string; params: any }>>([]);
@@ -134,6 +135,7 @@ export default function StudioPlayground() {
         console.warn("Failed fetching agent keys:", err);
       });
 
+    setMounted(true);
     loadSampleImage(SAMPLE_IMAGES[0].url);
     // The initial sample and key lookup intentionally run once per mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -142,16 +144,31 @@ export default function StudioPlayground() {
   const loadSampleImage = async (url: string, signal?: AbortSignal) => {
     try {
       setLoading(true);
-      const res = await fetch(url, { signal });
-      const blob = await res.blob();
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          resolve(reader.result as string);
-        };
-        reader.onerror = () => reject(new Error("Failed reading sample image"));
-        reader.readAsDataURL(blob);
-      });
+      let base64: string;
+      try {
+        const res = await fetch(url, { signal });
+        if (!res.ok) throw new Error(`Failed fetching sample: HTTP ${res.status}`);
+        const blob = await res.blob();
+        base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error("Failed reading sample image"));
+          reader.readAsDataURL(blob);
+        });
+      } catch (fetchErr: any) {
+        if (fetchErr?.name === "AbortError") throw fetchErr;
+        // Fallback to local /favicon.ico if remote image fails or is offline
+        const localRes = await fetch("/favicon.ico", { signal });
+        if (!localRes.ok) throw new Error(`Failed fetching local fallback: HTTP ${localRes.status}`);
+        const localBlob = await localRes.blob();
+        base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error("Failed reading local fallback image"));
+          reader.readAsDataURL(localBlob);
+        });
+      }
+
       await resetCanvasState({
         ...mutationCoordinator.getState(),
         originalImage: base64,
@@ -535,7 +552,7 @@ export default function StudioPlayground() {
     <div className="space-y-4">
       {/* The native host already discovers the imperative catalog. Keep the
           local declarative fallback from duplicating those tool names. */}
-      {!isNative && <DeclarativeWebMCPForms />}
+      {mounted && !isNative && <DeclarativeWebMCPForms />}
 
       {/* Quick Toolbar / Sample Selector */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-zinc-900/60 border border-zinc-800 rounded-xl p-3 backdrop-blur-sm">

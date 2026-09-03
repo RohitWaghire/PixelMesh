@@ -124,8 +124,8 @@ export default function HeroSplitDemo() {
               <div className="text-zinc-400 truncate">
                 <span className="text-emerald-400">X-Agent-Key-Fingerprint:</span> SHA256:47DEQpj8HBSa-_TImW...
               </div>
-              <div className="text-zinc-400">
-                <span className="text-emerald-400">X-Agent-Timestamp:</span> {Math.floor(Date.now() / 1000)}
+              <div className="text-zinc-400" suppressHydrationWarning>
+                <span className="text-emerald-400">X-Agent-Timestamp:</span> 1740001234
               </div>
               <div className="text-zinc-400">
                 <span className="text-emerald-400">X-Agent-Nonce:</span> 9b1deb4d-3b7d-4bad-9bdd

@@ -170,20 +170,15 @@ export function useWebMCP(
     onToolExecutionFailed,
   } = options;
 
-  const [supported, setSupported] = useState<boolean>(() => {
-    if (explicitContext && typeof explicitContext.registerTool === 'function') return true;
-    if (isModelContextAvailable()) return true;
-    const polyfill = ensureModelContextPolyfill();
-    return Boolean(polyfill && typeof polyfill.registerTool === 'function');
-  });
-  const [isNative, setIsNative] = useState<boolean>(() => isNativeModelContext());
+  const [supported, setSupported] = useState<boolean>(false);
+  const [isNative, setIsNative] = useState<boolean>(false);
   const [registered, setRegistered] = useState<boolean>(false);
   const [tools, setTools] = useState<RegisteredTool[]>([]);
   const [activeCall, setActiveCall] = useState<WebMCPActiveCall | null>(null);
   const [activeCalls, setActiveCalls] = useState<number>(0);
   const [lastExecutedTool, setLastExecutedTool] = useState<string | null>(null);
   const [lastEvent, setLastEvent] = useState<WebMCPEvent | null>(null);
-  const [executionHistory, setExecutionHistory] = useState<WebMCPExecutionRecord[]>(() => getExecutionHistory());
+  const [executionHistory, setExecutionHistory] = useState<WebMCPExecutionRecord[]>([]);
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
 
   // Persistent reference to latest adapter to avoid re-registration loops

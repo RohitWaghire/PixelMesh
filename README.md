@@ -244,6 +244,17 @@ const signature = crypto.sign(null, Buffer.from(canonicalString), privateKey).to
 
 ---
 
+## 🪝 Inbound Webhooks & GitHub App Integration
+
+PixelMesh includes a production-grade webhook ingestion gateway at `/api/webhooks/github` for automated GitHub Apps, CI/CD runners, and autonomous review bots (e.g. Greptile, visual QA agents).
+
+- **Constant-Time HMAC-SHA256 Verification**: Inbound requests must supply `X-Hub-Signature-256` matching `GITHUB_WEBHOOK_SECRET` evaluated via `crypto.timingSafeEqual`.
+- **Delivery Idempotency**: Guarantees at-most-once execution against GitHub delivery retries by tracking `X-GitHub-Delivery` identifiers with a 24-hour TTL in Redis.
+- **Event Dispatcher**: Decoupled event router handling `ping`, `pull_request`, `issue_comment`, `check_run`, and `workflow_run`.
+- **Health & Discovery Endpoint**: Query `GET /api/webhooks/github` for supported event manifests and gateway status.
+
+---
+
 ## 🎨 Interactive Studio & Dev Console
 
 - **Studio Sandbox (`/studio`)**: Interactive 3-column workspace with a draggable Before/After split comparison slider, zoom/pan controls, parameter dials, sample preset images, and exportable JSON-RPC code snippets.
@@ -328,6 +339,7 @@ Read our recorded [Architectural Decision Records (ADRs)](docs/adr):
 - **[ADR 0005: PixelMesh Branding & Credit Metering](docs/adr/0005-pixelmesh-branding-and-monetization.md)**
 - **[ADR 0006: Autonomous Agent Registration](docs/adr/0006-autonomous-agent-registration.md)**
 - **[ADR 0007: MCP Tool Error Handling Contract](docs/adr/0007-mcp-tool-error-handling.md)**
+- **[ADR 0008: GitHub App & Webhook Inbound Integration](docs/adr/0008-github-app-webhook-integration.md)**
 
 ---
 

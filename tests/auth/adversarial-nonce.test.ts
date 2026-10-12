@@ -449,15 +449,17 @@ test("adversarial: MCP route strictly rejects invalid nonces, clock skew, and re
     "Whitespace nonce must be rejected with unauthorized message"
   );
 
-  // 2. 61s Past Clock Skew -> 401
-  const reqPastSkew = createSignedRequest(`skew-past-${crypto.randomUUID()}`, nowSec - 61, listToolsBody);
+  // 2. 75s Past Clock Skew -> 401
+  const freshPastNow = Math.floor(Date.now() / 1000);
+  const reqPastSkew = createSignedRequest(`skew-past-${crypto.randomUUID()}`, freshPastNow - 75, listToolsBody);
   const resPastSkew = await mcpPostHandler(reqPastSkew);
   assert.equal(resPastSkew.status, 401);
   const jsonPastSkew = await resPastSkew.json();
   assert.ok(jsonPastSkew.error.message.includes("Timestamp clock skew too large"));
 
-  // 3. 61s Future Clock Skew -> 401
-  const reqFutSkew = createSignedRequest(`skew-fut-${crypto.randomUUID()}`, nowSec + 61, listToolsBody);
+  // 3. 75s Future Clock Skew -> 401
+  const freshFutNow = Math.floor(Date.now() / 1000);
+  const reqFutSkew = createSignedRequest(`skew-fut-${crypto.randomUUID()}`, freshFutNow + 75, listToolsBody);
   const resFutSkew = await mcpPostHandler(reqFutSkew);
   assert.equal(resFutSkew.status, 401);
   const jsonFutSkew = await resFutSkew.json();

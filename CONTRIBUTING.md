@@ -26,7 +26,7 @@ We are committed to providing a welcoming, inclusive, and harassment-free enviro
 ## 🛠️ Prerequisites
 
 Before you begin, ensure you have the following installed locally:
-- **Node.js**: Version 18.0 or later (Node 20+ recommended)
+- **Node.js**: Version 20.0 or later (Node 20 LTS or Node 22 recommended)
 - **Package Manager**: `npm` (comes with Node) or `pnpm`
 - **Git**: Configured with your committer identity
 
@@ -36,7 +36,7 @@ Before you begin, ensure you have the following installed locally:
 
 1. **Fork and Clone the Repository**:
    ```bash
-   git clone https://github.com/RohitWaghire/PixelMesh.git
+   git clone https://github.com/<your-username>/PixelMesh.git
    cd PixelMesh
    ```
 

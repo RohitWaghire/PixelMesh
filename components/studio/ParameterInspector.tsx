@@ -35,14 +35,14 @@ export default function ParameterInspector({
         <p className="text-xs text-zinc-400 mt-0.5">{selectedTool.description}</p>
       </div>
 
-      {/* Active Agent Signing Badge */}
+      {/* Active Agent WebMCP Mode */}
       <div className="px-4 py-2.5 bg-zinc-950/60 border-b border-zinc-800/60 flex items-center justify-between text-xs font-mono">
         <div className="flex items-center gap-1.5 text-zinc-400">
           <Key className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Signing Agent:</span>
+          <span>WebMCP Auth:</span>
         </div>
-        <span className="text-emerald-400 truncate max-w-[130px]" title={activeKeyFingerprint}>
-          {activeKeyFingerprint ? activeKeyFingerprint.slice(0, 14) + "..." : "Dev Admin"}
+        <span className="text-emerald-400 truncate max-w-[150px]" title={activeKeyFingerprint || "Interactive Studio — Zero Keys Required for WebMCP"}>
+          {activeKeyFingerprint ? activeKeyFingerprint.slice(0, 14) + "..." : "Zero Keys Required"}
         </span>
       </div>
 

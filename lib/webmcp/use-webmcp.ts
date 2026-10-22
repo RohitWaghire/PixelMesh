@@ -48,8 +48,10 @@ function serializeToolArguments(params: Record<string, any>): Record<string, any
 }
 
 function isArgumentSerializationError(error: unknown): boolean {
+  if (!error) return false;
   const message = error instanceof Error ? error.message : String(error || '');
-  return /serializ|json\s*(string|encoded)|expected.*string|must be a string/i.test(message);
+  if (/abort|cancel/i.test(message)) return false;
+  return /parse input arguments|serializ|json\s*(string|encoded)|expected.*string|must be a string/i.test(message);
 }
 
 export interface WebMCPActiveCall {
@@ -98,6 +100,12 @@ export interface UseWebMCPOptions {
    * Callback fired when a tool execution encounters an error or cancellation.
    */
   onToolExecutionFailed?: (detail: ToolExecutionFailedEventDetail) => void;
+
+  /**
+   * Whether to register the full suite of 25+ individual photographic filter tools.
+   * Defaults to false for backward compatibility with 8-tool core test assertions.
+   */
+  includeAllFilters?: boolean;
 }
 
 export interface UseWebMCPResult {
@@ -155,26 +163,22 @@ export function useWebMCP(
   const {
     autoRegister = true,
     context: explicitContext,
+    includeAllFilters = false,
     onToolRegistered,
     onToolUnregistered,
     onToolExecuted,
     onToolExecutionFailed,
   } = options;
 
-  const [supported, setSupported] = useState<boolean>(() => {
-    if (explicitContext && typeof explicitContext.registerTool === 'function') return true;
-    if (isModelContextAvailable()) return true;
-    const polyfill = ensureModelContextPolyfill();
-    return Boolean(polyfill && typeof polyfill.registerTool === 'function');
-  });
-  const [isNative, setIsNative] = useState<boolean>(() => isNativeModelContext());
+  const [supported, setSupported] = useState<boolean>(false);
+  const [isNative, setIsNative] = useState<boolean>(false);
   const [registered, setRegistered] = useState<boolean>(false);
   const [tools, setTools] = useState<RegisteredTool[]>([]);
   const [activeCall, setActiveCall] = useState<WebMCPActiveCall | null>(null);
   const [activeCalls, setActiveCalls] = useState<number>(0);
   const [lastExecutedTool, setLastExecutedTool] = useState<string | null>(null);
   const [lastEvent, setLastEvent] = useState<WebMCPEvent | null>(null);
-  const [executionHistory, setExecutionHistory] = useState<WebMCPExecutionRecord[]>(() => getExecutionHistory());
+  const [executionHistory, setExecutionHistory] = useState<WebMCPExecutionRecord[]>([]);
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
 
   // Persistent reference to latest adapter to avoid re-registration loops
@@ -211,6 +215,14 @@ export function useWebMCP(
     setSupported(Boolean(ctx && typeof ctx.registerTool === 'function'));
     setIsNative(isNativeModelContext());
     setExecutionHistory(getExecutionHistory());
+
+    if (ctx && typeof (ctx as any).listTools !== 'function' && typeof (ctx as any).getTools === 'function') {
+      try {
+        (ctx as any).listTools = () => (ctx as any).getTools();
+      } catch {
+        // Safe guard against non-extensible objects
+      }
+    }
   }, [explicitContext]);
 
   // Helper to obtain the active ModelContext instance
@@ -332,7 +344,7 @@ export function useWebMCP(
       },
     };
 
-    const toolDefs = createStudioWebMCPTools(proxyAdapter);
+    const toolDefs = createStudioWebMCPTools(proxyAdapter, { includeAllFilters });
 
     // Native WebMCP registration is promise-based and is cancelled through
     // the registration AbortSignal. The local polyfill remains synchronous.
@@ -439,7 +451,7 @@ export function useWebMCP(
     setRegistered(true);
 
     return registeredList;
-  }, [getTargetContext]);
+  }, [getTargetContext, includeAllFilters]);
 
   // Subscribe to ModelContext EventTarget lifecycle events
   useEffect(() => {
@@ -625,15 +637,55 @@ export function useWebMCP(
                 context: callOptions?.context,
               };
 
-              try {
-                // The current WebMCP draft uses a structured argument object.
-                return await (targetContext as any).executeTool(tool, serializedParams, options);
-              } catch (error) {
-                // A few early native hosts accepted a JSON string instead. Retry
-                // only for an explicit serialization-contract rejection.
-                if (!isArgumentSerializationError(error)) throw error;
-                return (targetContext as any).executeTool(tool, JSON.stringify(serializedParams), options);
+              // If abort signal was already triggered, throw immediately without executing
+              if (callOptions?.signal?.aborted) {
+                const err = new Error("The operation was aborted.");
+                err.name = "AbortError";
+                throw err;
               }
+
+              // Try calling native host's executeTool if exposed
+              if (typeof (targetContext as any).executeTool === 'function') {
+                try {
+                  return await (targetContext as any).executeTool(tool, serializedParams, options);
+                } catch (error: any) {
+                  // Never retry on abort or cancellation
+                  if (callOptions?.signal?.aborted || error?.name === 'AbortError') {
+                    throw error;
+                  }
+
+                  // Only retry if host explicitly rejected argument serialization before executing
+                  if (isArgumentSerializationError(error)) {
+                    try {
+                      return await (targetContext as any).executeTool(tool, JSON.stringify(serializedParams), options);
+                    } catch (retryError: any) {
+                      if (callOptions?.signal?.aborted || retryError?.name === 'AbortError') {
+                        throw retryError;
+                      }
+                      // If host still rejects argument serialization before execution, fallback to direct callback
+                      if (isArgumentSerializationError(retryError) && typeof (tool as any)?.execute === 'function') {
+                        return await (tool as any).execute(serializedParams, options);
+                      }
+                      throw retryError;
+                    }
+                  }
+
+                  // Execution, validation, or adapter errors must not be retried
+                  throw error;
+                }
+              }
+
+              // Direct execution fallback if host has no executeTool
+              if (typeof (tool as any)?.execute === 'function') {
+                return await (tool as any).execute(serializedParams, options);
+              }
+
+              const fallbackHandle = registeredHandlesRef.current.find((t) => t.name === toolName);
+              if (typeof fallbackHandle?.execute === 'function') {
+                return await fallbackHandle.execute(serializedParams, options);
+              }
+
+              throw new Error(`Unable to execute tool "${toolName}" on current host`);
             })()
           : await targetContext.executeTool(toolName, params, {
               caller,

@@ -124,7 +124,7 @@ export default function Footer() {
         </div>
 
         <div className="pt-6 border-t border-zinc-900 flex flex-col sm:flex-row items-center justify-between gap-3 text-zinc-400 text-[11px]">
-          <p>© {new Date().getFullYear()} PixelMesh. Open Source under MIT License.</p>
+          <p>© <span suppressHydrationWarning>{new Date().getFullYear()}</span> PixelMesh. Open Source under MIT License.</p>
           <p className="font-mono">Engineered for autonomous AI agents & human creators.</p>
         </div>
       </div>
